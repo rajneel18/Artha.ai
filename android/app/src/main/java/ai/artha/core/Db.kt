@@ -68,3 +68,5 @@ fun Map<String, Any?>.bool(k: String): Boolean? = this[k] as? Boolean
 fun Map<String, Any?>.strList(k: String): List<String>? = (this[k] as? List<Any?>)?.mapNotNull { it?.toString() }
 
 class ApiError(val status: Int, message: String) : Exception(message)
+
+fun titleCase(s: String): String = s.lowercase().split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.titlecase(java.util.Locale.ENGLISH) } }

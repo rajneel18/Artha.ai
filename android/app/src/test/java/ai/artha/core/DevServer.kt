@@ -12,7 +12,29 @@ import java.net.Socket
  * Only runs when ARTHA_DEVSERVER=<seconds> is set:  ARTHA_DEVSERVER=600 gradle testDebugUnitTest --tests '*DevServer*'
  */
 class DevServer {
-    private val api = Api(Engine(JdbcDb()), FakeAi())
+    private val model = FakeModel().apply {
+        answers["shravani"] = """{"type": "debit", "amount": 1.0, "party": "Shravani Shinde", "category": "Transfers"}"""
+        answers["Netflix"] = """{"type": "debit", "amount": 499, "party": "Netflix", "category": "Entertainment"}"""
+        answers["ZOMATO"] = """{"type": "debit", "amount": 1250, "party": "Zomato", "category": "Food & Dining"}"""
+        answers["rahul"] = """{"type": "credit", "amount": 2500, "party": "Rahul Patil", "category": "Transfers"}"""
+        answers["ramesh"] = """{"type": "debit", "amount": 640, "party": "Ramesh", "category": "Other", "confidence": "low"}"""
+    }
+    private val api = Api(Engine(JdbcDb()), model).also { a ->
+        val now = java.time.LocalDateTime.now()
+        listOf(
+            "Your a/c no. XX6196 is debited for Rs.1.00 on 14-11-2026 17:46:28 and credited to vpa shravani.shinde109-1@okicici (UPI Ref no 631826724674) Your Current Balance is INR 84413.27 - Saraswat Co-op Bank Ltd.",
+            "UPI AutoPay Mandate for Netflix debit of Rs.499.00 is scheduled on 30-10-2026. Please ensure sufficient balance in your account - Saraswat Co-op Bank Ltd.",
+            "INR 1,250.00 spent on ICICI Bank Card XX9876 at ZOMATO on 14-Nov-26. Avl Lmt: INR 50,000",
+            "Your a/c no. XX6196 is credited by Rs.2,500.00 from vpa rahul.patil22@oksbi (UPI Ref no 631812345678) - Saraswat Co-op Bank Ltd.",
+            "Rs.640 debited from a/c XX6196 to ramesh UPI Ref 77",
+            "482913 is your OTP for transaction of Rs.2,000.00 at AMAZON - Saraswat Bank",
+        ).forEachIndexed { i, sms -> a.captureSms(sms, "AX-SARBNK", now.minusHours(i.toLong())) }
+        while (a.engine.analyzeNext(a.extractor)) {}
+        a.handle("PUT", "/api/settings", toJson(mapOf("daily_allowance" to 800, "budget_start" to java.time.LocalDate.now().minusDays(5).toString())).toString())
+        listOf(250 to "Swiggy", 180 to "Uber", 420 to "Blinkit").forEach { (amt, m) ->
+            a.handle("POST", "/api/transactions", toJson(mapOf("amount" to amt, "merchant" to m, "category" to if (m == "Uber") "Transport" else "Food & Dining")).toString())
+        }
+    }
     private val assets = File("src/main/assets")
 
     @Test fun serve() {

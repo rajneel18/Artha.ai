@@ -39,107 +39,136 @@ class JdbcDb : Db {
     override fun vacuum() { c.createStatement().use { it.execute("VACUUM") } }
 }
 
-class FakeAi(var on: Boolean = false) : Ai {
-    var expenses: List<Ai.Expense> = emptyList()
-    var receipt: Ai.Receipt? = null
-    override fun available() = on
-    override fun parseExpenses(text: String, categories: List<String>, today: LocalDate) = expenses
-    override fun scanReceipt(data: ByteArray, mediaType: String, categories: List<String>, today: LocalDate) = receipt!!
-    override fun planQuery(question: String, categories: List<String>, today: LocalDate): Map<String, Any?> = throw Ai.Unavailable("no")
-    override fun monthlyInsights(statsJson: String): Map<String, Any?> = mapOf("headline" to "ok")
+/** Stands in for Qwen: answers with canned JSON keyed by a phrase in the message, and counts calls. */
+class FakeModel(var ready: Boolean = true) : LocalModel {
+    val answers = mutableMapOf<String, String>()
+    var calls = 0
+    override fun available() = ready
+    override fun generate(prompt: String): String {
+        calls++
+        val tail = prompt.substringAfterLast("\nSMS: ").substringAfterLast("\nNote: ").substringAfterLast("\nRow: ").substringAfterLast("\nQuestion: ")
+        return answers.entries.firstOrNull { it.key in tail }?.value ?: """{"type": "ignore", "amount": 0, "party": "", "category": "Other"}"""
+    }
 }
 
 @Suppress("UNCHECKED_CAST")
 class EngineTest {
     private val today = LocalDate.of(2026, 11, 14)
+    private val now = java.time.LocalDateTime.of(2026, 11, 14, 17, 46)
     private lateinit var engine: Engine
-    private lateinit var ai: FakeAi
+    private lateinit var model: FakeModel
     private lateinit var api: Api
+
+    private val SARASWAT_DEBIT = "Your a/c no. XX6196 is debited for Rs.1.00 on 14-11-2026 17:46:28 and credited to vpa shravani.shinde109-1@okicici (UPI Ref no 631826724674) Your Current Balance is INR 84413.27. If this not done by you, kindly contact on  022-41572070 - Saraswat Co-op Bank Ltd."
+    private val NETFLIX_MANDATE = "UPI AutoPay Mandate for Netflix debit of Rs.499.00 is scheduled on 30-10-2026. Please ensure sufficient balance in your account - Saraswat Co-op Bank Ltd."
+    private val OTP = "Dear Customer, 482913 is your OTP for transaction of Rs.2,000.00 at AMAZON. Do not share it - Saraswat Bank"
 
     @Before fun setUp() {
         engine = Engine(JdbcDb()) { today }
-        ai = FakeAi()
-        api = Api(engine, ai)
+        model = FakeModel()
+        api = Api(engine, model)
+        model.answers["shravani"] = """{"type": "debit", "amount": 1.0, "party": "Shravani Shinde", "category": "Transfers", "confidence": "high"}"""
+        model.answers["Netflix debit"] = """{"type": "debit", "amount": 499, "party": "Netflix", "category": "Entertainment"}""" // model gets it wrong
+        model.answers["OTP"] = """{"type": "debit", "amount": 2000, "party": "Amazon", "category": "Shopping"}""" // model gets it wrong
     }
 
     private fun call(m: String, path: String, body: Any? = null): Any? {
         val r = api.handle(m, path, body?.let { toJson(it).toString() })
         assertEquals("$m $path -> ${r.body}", 200, r.status)
-        return fromJson(toJson(r.body)) // round-trip like the UI sees it
+        return fromJson(toJson(r.body))
     }
     private fun status(m: String, path: String, body: Any? = null) = api.handle(m, path, body?.let { toJson(it).toString() }).status
-    private fun added(text: String) = (call("POST", "/api/ingest", mapOf("text" to text)) as Map<String, Any?>)["added"] as List<Map<String, Any?>>
-    private fun review() = call("GET", "/api/review") as List<Map<String, Any?>>
+    private fun detected() = call("GET", "/api/detected") as Map<String, Any?>
+    private fun items() = detected()["items"] as List<Map<String, Any?>>
     private fun txs() = call("GET", "/api/transactions") as List<Map<String, Any?>>
+    private fun receive(sms: String) { api.captureSms(sms, "AX-SARBNK", now); while (engine.analyzeNext(api.extractor)) {} }
 
-    @Test fun parsesAndCategorizes() {
-        val cases = listOf(
-            listOf("250 swiggy dinner", 250.0, "Swiggy Dinner", "Food & Dining"),
-            listOf("petrol 1,500", 1500.0, "Petrol", "Fuel"),
-            listOf("spent 120 on uber", 120.0, "Uber", "Transport"),
-            listOf("Rs.499.00 debited from A/c XX1234 on 12-11-26 to VPA netflix@icici UPI Ref 123456", 499.0, "Netflix", "Entertainment"),
-            listOf("INR 1,234.50 spent on HDFC Bank Card XX9876 at AMAZON on 2026-11-10. Avl Lmt: INR 50,000", 1234.5, "Amazon", "Shopping"),
-            listOf("Sent Rs.85.00 From HDFC Bank A/C *1234 To ZEPTO On 13/11/26 Ref 999", 85.0, "Zepto", "Groceries"),
-        )
-        for ((text, amount, merchant, cat) in cases) {
-            val p = Parser.parse(text as String, today)!!
-            assertEquals(text, amount, p.amount)
-            assertEquals(text, merchant, p.merchant)
-            assertEquals(text, cat, Categorizer.categorize(p.note, p.merchant))
-        }
-        val c = Parser.parse("Rs 5000 credited to your A/c XX1234 on 01-11-26 by NEFT", today)!!
-        assertEquals("credit", c.kind); assertEquals(LocalDate.of(2026, 11, 1), c.date)
-        assertEquals(LocalDate.of(2026, 11, 13), Parser.parse("coffee 90 yesterday", today)!!.date)
-        assertNull(Parser.parse("hello there", today))
-        val s = Parser.parse("900 dinner at toit split with rahul and priya", today)!!
-        assertEquals(listOf("Rahul", "Priya"), s.splitWith)
-        assertEquals(3, Parser.parse("600 cab split 3 ways", today)!!.splitWays)
+    @Test fun smsIsReadByAiAndWaitsForConfirmation() {
+        receive(SARASWAT_DEBIT)
+        val it = items().single()
+        assertEquals("debit", it["type"]); assertEquals(1.0, it["amount"] as Double, 0.0); assertEquals("Shravani Shinde", it["party"])
+        assertEquals(1L, it["confident"])
+        assertTrue("nothing is logged until you confirm", txs().isEmpty())
+        call("POST", "/api/detected/${it["id"]}", mapOf("action" to "log"))
+        val tx = txs().single()
+        assertEquals("Shravani Shinde", tx["merchant"]); assertEquals("2026-11-14", tx["date"]); assertEquals("Transfers", tx["category"])
+        assertFalse("balance is not stored", (tx["note"] as String).contains("84413"))
     }
 
-    @Test fun automaticCaptureIsStrict() {
-        assertNull(api.captureAutomatic("Meet at 5, bring 400 chairs", "sms"))
-        assertNull(api.captureAutomatic("Your OTP is 482913 for txn of Rs 2000", "sms"))
-        assertNotNull(api.captureAutomatic("Rs.649 debited from A/c XX1234 on 13-11-26 to VPA blinkit@hdfc UPI Ref 1", "sms"))
-        // the same payment from the UPI app notification a minute later is merged silently, not asked about
-        assertNull(api.captureAutomatic("Paid ₹649 to Blinkit", "notification"))
-        assertEquals(1, txs().size); assertTrue(review().isEmpty())
+    @Test fun safetyCheckOverridesTheModel() {
+        receive(OTP)
+        receive(NETFLIX_MANDATE)
+        val d = detected()
+        assertEquals(1, (d["skipped"] as List<*>).size)                         // OTP: never a payment
+        val upcoming = (d["items"] as List<Map<String, Any?>>).single()
+        assertEquals("upcoming", upcoming["type"]); assertEquals("Netflix", upcoming["party"])
+        assertEquals(1, model.calls)                                             // the OTP never even reached the model
+        call("POST", "/api/detected/${upcoming["id"]}", mapOf("action" to "log"))
+        assertTrue("an upcoming mandate is not spending", txs().isEmpty())
+        val subs = (call("GET", "/api/subscriptions") as Map<String, Any?>)["subscriptions"] as List<Map<String, Any?>>
+        assertEquals("Netflix", subs.single()["name"]); assertEquals(499.0, subs.single()["amount"] as Double, 0.0)
     }
 
-    @Test fun learnsFromCorrections() {
-        val r = added("250 swiggy\n400 ramesh kirana store")
-        assertEquals(2, r.size)
-        val ramesh = txs().first { it["merchant"] == "Ramesh Kirana Store" }
-        assertEquals("Groceries", ramesh["category"]) // "kirana" keyword
-        call("PATCH", "/api/transactions/${ramesh["id"]}", mapOf("category" to "Shopping"))
-        added("100 ramesh kirana store")
-        assertEquals(listOf("Shopping", "Shopping"), txs().filter { it["merchant"] == "Ramesh Kirana Store" }.map { it["category"] })
+    @Test fun inventedAmountsAreNotTrusted() {
+        model.answers["swiggy"] = """{"type": "debit", "amount": 950, "party": "Swiggy", "category": "Food & Dining"}"""
+        receive("Rs.250.00 debited from A/c XX1 to VPA swiggy@icici UPI Ref 9")
+        assertEquals(0L, items().single()["confident"])
     }
 
-    @Test fun nonTransactionsAndRedaction() {
-        val r = call("POST", "/api/ingest", mapOf("text" to "Your OTP is 482913 for txn of Rs 2000\n\nRs 999 will be debited on 20-11-26 for your SIP\n\n" +
-            "Rs 300 debited from A/c 123456789012 to VPA chai@ybl. Avl Bal Rs 45,000")) as Map<String, Any?>
-        assertEquals(2L, r["ignored"])
-        val note = (r["added"] as List<Map<String, Any?>>)[0]["note"] as String
-        assertFalse("123456789012" in note); assertFalse("45,000" in note); assertTrue("9012" in note)
+    @Test fun logAllAndSkip() {
+        model.answers["zomato"] = """{"type": "debit", "amount": 349, "party": "Zomato", "category": "Food & Dining"}"""
+        model.answers["uber"] = """{"type": "debit", "amount": 120, "party": "Uber", "category": "Transport"}"""
+        receive(SARASWAT_DEBIT); receive("Rs.349 spent at zomato Ref 1"); receive("Rs.120 paid to uber Ref 2")
+        call("POST", "/api/detected/${items().first { it["party"] == "Uber" }["id"]}", mapOf("action" to "skip"))
+        assertEquals(2L, (call("POST", "/api/detected/log-all") as Map<String, Any?>)["logged"])
+        assertEquals(setOf("Shravani Shinde", "Zomato"), txs().map { it["merchant"] }.toSet())
+        assertTrue(items().isEmpty())
+        receive("Rs.349 spent at zomato Ref 1")                                   // the same SMS again is not queued twice
+        assertTrue(items().isEmpty())
     }
 
-    @Test fun clarificationOnlyWhenNeeded() {
-        added("250 swiggy\n700 zxqv traders")
-        val rv = review()
-        assertEquals(listOf("Zxqv Traders"), rv.map { it["merchant"] }); assertNotNull(rv[0]["question"])
-        call("POST", "/api/review/${rv[0]["id"]}", mapOf("action" to "confirm", "category" to "Shopping"))
-        assertTrue(review().isEmpty())
-        added("300 zxqv traders")
-        assertTrue(review().isEmpty())
+    @Test fun yourCorrectionsBeatTheModel() {
+        model.answers["ramesh"] = """{"type": "debit", "amount": 400, "party": "Ramesh Stores", "category": "Shopping"}"""
+        receive("Rs.400 paid to ramesh stores Ref 1")
+        call("POST", "/api/detected/${items().single()["id"]}", mapOf("action" to "log", "category" to "Groceries"))
+        receive("Rs.400 paid to ramesh stores Ref 2")
+        assertEquals("Groceries", items().single()["category"])
     }
 
-    @Test fun duplicatePaymentDetection() {
-        api.ingestText("Rs.649 debited from A/c XX1234 on 13-11-26 to VPA blinkit@hdfc UPI Ref 1", "sms", false)
-        added("649 blinkit 13-11-26")
-        val rv = review()
-        assertEquals(1, rv.size); assertEquals("duplicate", rv[0]["review_reason"])
-        call("POST", "/api/review/${rv[0]["id"]}", mapOf("action" to "delete"))
-        assertEquals(1, txs().size)
+    @Test fun notesAreLoggedDirectlyWithSplits() {
+        model.answers["coffee"] = """{"items": [{"type": "debit", "amount": 450, "party": "Third Wave Coffee", "date": "2026-11-14", "category": "Food & Dining", "split_with": ["Asha"], "split_ways": 2, "confidence": "high"}]}"""
+        val r = call("POST", "/api/ingest", mapOf("text" to "450 coffee with asha, split it")) as Map<String, Any?>
+        val tx = (r["added"] as List<Map<String, Any?>>).single()
+        assertEquals(225.0, tx["my_share"] as Double, 0.0)
+        assertEquals(listOf("Asha"), (call("GET", "/api/splits") as List<Map<String, Any?>>).map { it["person"] })
+    }
+
+    @Test fun statementImportGoesThroughTheQueue() {
+        model.answers["BLINKIT"] = """{"type": "debit", "amount": 320, "party": "Blinkit", "date": "2026-11-10", "category": "Groceries"}"""
+        model.answers["SALARY"] = """{"type": "credit", "amount": 50000, "party": "Acme Salary", "date": "2026-11-11", "category": "Other"}"""
+        val r = call("POST", "/api/import/text", mapOf("text" to "Date,Narration,Withdrawal Amt,Deposit Amt\n10/11/2026,UPI-BLINKIT-123,320.00,\n11/11/2026,SALARY,,50000\n")) as Map<String, Any?>
+        assertEquals(2L, r["queued"])
+        while (engine.analyzeNext(api.extractor)) {}
+        call("POST", "/api/detected/log-all")
+        val byName = txs().associateBy { it["merchant"] }
+        assertEquals("2026-11-10", byName["Blinkit"]!!["date"]); assertEquals("credit", byName["Acme Salary"]!!["kind"])
+    }
+
+    @Test fun withoutTheModelMessagesWait() {
+        model.ready = false
+        api.captureSms(SARASWAT_DEBIT, "AX-SARBNK", now)
+        assertEquals(1L, engine.pendingCount())
+        assertEquals(409, status("POST", "/api/ingest", mapOf("text" to "250 swiggy")))
+        model.ready = true
+        while (engine.analyzeNext(api.extractor)) {}
+        assertEquals(0L, engine.pendingCount()); assertEquals(1, items().size)
+    }
+
+    @Test fun autoLogConfidentWhenTurnedOn() {
+        call("PUT", "/api/settings", mapOf("auto_log_confident" to true))
+        receive(SARASWAT_DEBIT); receive(NETFLIX_MANDATE)
+        assertEquals(1, txs().size)                      // confident debit logged automatically
+        assertEquals("upcoming", items().single()["type"]) // mandates still wait for you
     }
 
     @Test fun allowanceAndSavingsPool() {
@@ -149,89 +178,57 @@ class EngineTest {
         call("POST", "/api/transactions", mapOf("amount" to 20000, "merchant" to "Landlord", "category" to "Rent", "date" to "2026-11-11"))
         call("POST", "/api/transactions", mapOf("amount" to 300, "merchant" to "Chai", "category" to "Food & Dining"))
         val b = call("GET", "/api/budget") as Map<String, Any?>
-        assertEquals(4 * 1000 - 1900.0, b["savings_pool"] as Double, 0.001)   // 10th..13th, rent excluded
+        assertEquals(4 * 1000 - 1900.0, b["savings_pool"] as Double, 0.001)
         assertEquals(700.0, b["left_today"] as Double, 0.001)
     }
 
-    @Test fun splitAndAutoSettle() {
-        val tx = added("900 dinner at toit split with rahul and priya")[0]
-        assertEquals(300.0, tx["my_share"] as Double, 0.001)
-        assertEquals(setOf("Rahul", "Priya"), (call("GET", "/api/splits") as List<Map<String, Any?>>).map { it["person"] }.toSet())
-        added("Rs 300 credited to your A/c XX1234 from Rahul Sharma via UPI")
-        assertEquals(listOf("Priya"), (call("GET", "/api/splits") as List<Map<String, Any?>>).map { it["person"] })
-        assertEquals(300.0, (call("GET", "/api/summary") as Map<String, Any?>)["today"] as Double, 0.001)
-    }
-
-    @Test fun recurringAndSubscriptions() {
-        for (d in listOf("2026-08-05", "2026-09-05", "2026-10-05")) call("POST", "/api/transactions", mapOf("amount" to 649, "merchant" to "Spotify", "date" to d))
-        api.ingestText("Rs.199 debited from A/c XX1 to VPA netflix@icici UPI Ref 9", "sms", false)
+    @Test fun recurringAndCancelledSubscriptions() {
+        for (d in listOf("2026-08-05", "2026-09-05", "2026-10-05")) call("POST", "/api/transactions", mapOf("amount" to 649, "merchant" to "Spotify", "date" to d, "category" to "Entertainment"))
         val subs = (call("GET", "/api/subscriptions") as Map<String, Any?>)["subscriptions"] as List<Map<String, Any?>>
-        val byName = subs.associateBy { it["name"] }
-        assertEquals("active", byName["Spotify"]!!["status"]); assertEquals("2026-11-05", byName["Spotify"]!!["next_date"])
-        assertEquals("suggested", byName["Netflix"]!!["status"])
-        call("PATCH", "/api/subscriptions/${byName["Spotify"]!!["id"]}", mapOf("status" to "cancelled"))
-        call("POST", "/api/transactions", mapOf("amount" to 649, "merchant" to "Spotify", "date" to "2026-11-05"))
-        assertTrue(review().any { it["review_reason"] == "cancelled_subscription" })
+        val s = subs.single(); assertEquals("active", s["status"]); assertEquals("2026-11-05", s["next_date"])
+        call("PATCH", "/api/subscriptions/${s["id"]}", mapOf("status" to "cancelled"))
+        call("POST", "/api/transactions", mapOf("amount" to 649, "merchant" to "Spotify", "date" to "2026-11-05", "category" to "Entertainment"))
+        assertTrue((call("GET", "/api/review") as List<Map<String, Any?>>).any { it["review_reason"] == "cancelled_subscription" })
     }
 
     @Test fun customRulesAndCategories() {
         call("PUT", "/api/settings", mapOf("custom_categories" to listOf("Pets")))
-        val id = added("1200 heads up for tails")[0]["id"]
-        assertEquals(1L, (call("POST", "/api/rules", mapOf("pattern" to "tails", "category" to "Pets")) as Map<String, Any?>)["updated_transactions"])
-        assertEquals("Pets", (call("GET", "/api/transactions/$id") as Map<String, Any?>)["category"])
-        call("POST", "/api/rules", mapOf("pattern" to "^uber", "match_type" to "regex", "category" to "Travel", "min_amount" to 1000))
-        val (a, b) = added("uber 1500\nuber 200")
-        assertEquals("Travel", a["category"]); assertEquals("Transport", b["category"])
+        call("POST", "/api/rules", mapOf("pattern" to "tails", "category" to "Pets"))
+        model.answers["tails"] = """{"type": "debit", "amount": 1200, "party": "Heads Up For Tails", "category": "Shopping"}"""
+        receive("Rs.1200 spent at heads up for tails Ref 5")
+        assertEquals("Pets", items().single()["category"])
     }
 
-    @Test fun askMerchantHistoryInsights() {
-        added("250 swiggy\n400 zomato\nuber 180")
-        val r = call("POST", "/api/ask", mapOf("question" to "how much did I spend on food this month?")) as Map<String, Any?>
-        assertEquals(650.0, r["total"] as Double, 0.001); assertTrue("650" in (r["answer"] as String))
-        assertEquals(1L, (call("POST", "/api/ask", mapOf("question" to "show uber")) as Map<String, Any?>)["count"])
+    @Test fun mostlyOfflineQuestions() {
+        call("POST", "/api/transactions", mapOf("amount" to 250, "merchant" to "Swiggy", "category" to "Food & Dining"))
+        call("POST", "/api/transactions", mapOf("amount" to 400, "merchant" to "Zomato", "category" to "Food & Dining"))
+        model.answers["food"] = """{"date_from": "2026-11-01", "date_to": "2026-11-14", "categories": ["Food & Dining"], "party": "", "kind": "debit", "min_amount": 0, "max_amount": 0, "aggregate": "sum"}"""
+        val r = call("POST", "/api/ask", mapOf("question" to "how much on food this month")) as Map<String, Any?>
+        assertEquals(650.0, r["total"] as Double, 0.001); assertEquals(true, r["used_ai"])
         val h = call("GET", "/api/merchants/history?name=Swiggy") as Map<String, Any?>
-        assertEquals(250.0, h["total"] as Double, 0.001); assertEquals(12, (h["monthly"] as List<*>).size)
-        val ins = call("GET", "/api/insights") as Map<String, Any?>
-        assertTrue((ins["insights"] as List<*>).isNotEmpty())
-        assertTrue(((ins["recommendations"] as Map<String, Any?>)["suggested_daily_allowance"] as Long) > 0)
-        assertEquals(400, status("POST", "/api/insights/ai"))
+        assertEquals(250.0, h["total"] as Double, 0.001)
     }
 
     @Test fun userControlledDeletion() {
-        added("250 swiggy\n100 chai")
+        call("POST", "/api/transactions", mapOf("amount" to 250, "merchant" to "Swiggy"))
+        receive(SARASWAT_DEBIT)
         assertEquals(400, status("POST", "/api/data/delete", mapOf("scope" to "everything", "confirm" to "nope")))
-        val r = call("POST", "/api/data/delete", mapOf("scope" to "everything", "confirm" to "DELETE")) as Map<String, Any?>
-        assertEquals(0L, r["remaining_transactions"]); assertTrue(txs().isEmpty())
-    }
-
-    @Test fun csvImportAndExport() {
-        val csv = "Date,Narration,Withdrawal Amt,Deposit Amt\n10/11/2026,UPI-BLINKIT-123,320.00,\n11/11/2026,SALARY,,50000\n"
-        assertEquals(2L, (call("POST", "/api/import/csv", mapOf("text" to csv)) as Map<String, Any?>)["added"])
-        val out = (call("GET", "/api/export.csv") as Map<String, Any?>)["content"] as String
-        assertTrue("Blinkit" in out && "Groceries" in out)
-    }
-
-    @Test fun aiFeaturesWithFakeClaude() {
-        ai.on = true
-        call("PUT", "/api/settings", mapOf("ai_enabled" to true))
-        ai.expenses = listOf(Ai.Expense(450.0, "Third Wave Coffee", "Food & Dining", "debit", today.toString(), listOf("Asha"), 2, true))
-        val r = (call("POST", "/api/ingest", mapOf("text" to "coffee with asha four fifty we split it", "smart" to true)) as Map<String, Any?>)["added"] as List<Map<String, Any?>>
-        assertEquals("Third Wave Coffee", r[0]["merchant"]); assertEquals(225.0, r[0]["my_share"] as Double, 0.001)
-        ai.receipt = Ai.Receipt("DMart", 1834.5, "2026-11-12", "Groceries", listOf("Rice", "Dal"), true)
-        val rc = call("POST", "/api/receipt", mapOf("mime" to "image/jpeg", "data" to java.util.Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3)))) as Map<String, Any?>
-        assertEquals(1834.5, (rc["transaction"] as Map<String, Any?>)["amount"] as Double, 0.001)
+        call("POST", "/api/data/delete", mapOf("scope" to "everything", "confirm" to "DELETE"))
+        assertTrue(txs().isEmpty()); assertTrue(items().isEmpty())
     }
 }
 
 @Suppress("UNCHECKED_CAST")
 class BackupTest {
     @Test fun backupRestoresIntoAFreshInstall() {
-        val a = Api(Engine(JdbcDb()) { LocalDate.of(2026, 11, 14) }, FakeAi())
-        a.handle("POST", "/api/ingest", toJson(mapOf("text" to "900 dinner at toit split with rahul and priya\n250 swiggy")).toString())
+        val a = Api(Engine(JdbcDb()) { LocalDate.of(2026, 11, 14) }, FakeModel())
+        val t = a.handle("POST", "/api/transactions", toJson(mapOf("amount" to 900, "merchant" to "Toit")).toString()).body as Map<String, Any?>
+        a.handle("POST", "/api/transactions/${t["id"]}/split", toJson(mapOf("people" to listOf("Rahul", "Priya"))).toString())
+        a.handle("POST", "/api/transactions", toJson(mapOf("amount" to 250, "merchant" to "Swiggy")).toString())
         a.handle("PUT", "/api/settings", toJson(mapOf("daily_allowance" to 777)).toString())
         val backup = (a.handle("GET", "/api/export.json", null).body as Map<String, Any?>)["content"] as String
 
-        val b = Api(Engine(JdbcDb()) { LocalDate.of(2026, 11, 14) }, FakeAi())
+        val b = Api(Engine(JdbcDb()) { LocalDate.of(2026, 11, 14) }, FakeModel())
         assertEquals(400, b.handle("POST", "/api/data/restore", toJson(mapOf("content" to backup, "confirm" to "no")).toString()).status)
         val r = b.handle("POST", "/api/data/restore", toJson(mapOf("content" to backup, "confirm" to "RESTORE")).toString())
         assertEquals(200, r.status); assertEquals(2L, (r.body as Map<String, Any?>)["transactions"])

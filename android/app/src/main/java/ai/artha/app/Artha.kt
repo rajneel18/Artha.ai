@@ -11,65 +11,43 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import androidx.security.crypto.EncryptedSharedPreferences
-import androidx.security.crypto.MasterKey
-import java.text.NumberFormat
-import java.util.Locale
 
-/** App singleton: one engine + API shared by the UI and background capture. */
+/** App singleton: one engine, one AI model, shared by the screen and background work. */
 class Artha : Application() {
     lateinit var api: Api
         private set
-
-    /** Secrets (the Claude API key) live in Android Keystore-backed encrypted preferences. */
-    val secrets by lazy {
-        EncryptedSharedPreferences.create(
-            this, "artha_secrets",
-            MasterKey.Builder(this).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
-    }
+    lateinit var model: QwenModel
+        private set
 
     override fun onCreate() {
         super.onCreate()
-        api = Api(Engine(AndroidDb(this)), ClaudeAi { secrets.getString("claude_api_key", null) })
+        model = QwenModel(this)
+        api = Api(Engine(AndroidDb(this)), model)
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(NotificationChannel(CH_QUESTION, "Needs your input", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "When Artha isn't sure about a payment it captured"
+        nm.createNotificationChannel(NotificationChannel(CH_DETECTED, "Payments detected", NotificationManager.IMPORTANCE_DEFAULT).apply {
+            description = "When Artha finds payments in your bank SMS for you to confirm"
         })
-        nm.createNotificationChannel(NotificationChannel(CH_LOGGED, "Payments logged", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Quiet confirmation for each payment captured automatically"
+        nm.createNotificationChannel(NotificationChannel(CH_WORK, "Reading messages", NotificationManager.IMPORTANCE_LOW).apply {
+            description = "Progress while the on-device AI reads messages or downloads"
         })
     }
 
-    /** Runs background capture and tells the user only what matters. */
-    fun capture(text: String, source: String) {
-        val s = api.engine.settings()
-        val key = if (source == "sms") "auto_capture_sms" else "auto_capture_notifications"
-        if (s[key] == false) return
-        val tx = synchronized(this) { api.captureAutomatic(text, source) } ?: return
-        val amount = "₹" + NumberFormat.getNumberInstance(Locale("en", "IN")).format(tx["amount"] as Double)
-        val merchant = tx["merchant"] as String
-        val question = tx["question"] as String?
-        when {
-            question != null -> notify(CH_QUESTION, "$amount · $merchant", question, (tx["id"] as Long).toInt())
-            s["notify_logged"] == true -> notify(CH_LOGGED, "$amount · $merchant", "Logged as ${tx["category"]}", (tx["id"] as Long).toInt())
-        }
-    }
+    override fun onTrimMemory(level: Int) { super.onTrimMemory(level); if (level >= TRIM_MEMORY_BACKGROUND) model.release() }
 
-    private fun notify(channel: String, title: String, text: String, id: Int) {
+    fun notifyDetected(count: Int) {
+        if (api.engine.settings()["notify_logged"] == false) return
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        val open = PendingIntent.getActivity(this, id, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+        val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val n = NotificationCompat.Builder(this, channel).setSmallIcon(R.drawable.ic_stat_rupee).setContentTitle(title).setContentText(text)
-            .setContentIntent(open).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build()
-        NotificationManagerCompat.from(this).notify(id, n)
+        val text = if (count == 1) "1 payment detected. Tap to review" else "$count payments detected. Tap to review"
+        NotificationManagerCompat.from(this).notify(7, NotificationCompat.Builder(this, CH_DETECTED).setSmallIcon(R.drawable.ic_stat_rupee)
+            .setContentTitle("Artha").setContentText(text).setContentIntent(open).setAutoCancel(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
     }
 
     companion object {
-        const val CH_QUESTION = "question"
-        const val CH_LOGGED = "logged"
+        const val CH_DETECTED = "detected"
+        const val CH_WORK = "work"
         fun of(c: Context) = c.applicationContext as Artha
     }
 }

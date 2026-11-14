@@ -13,22 +13,36 @@
 </script>
 <style>
   :root {
-    --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --accent-text:#fff;
-    --chip:#eef2ff; --chip-text:#3730a3; --green:#15803d; --red:#dc2626; --amber:#b45309; --amber-bg:#fef3c7; --track:#e5e7eb;
-    --sheet-shadow: 0 -8px 32px rgba(0,0,0,.18);
+    --bg:#f3ece0; --card:#fffcf6; --text:#3b3128; --muted:#857665; --line:#e4d9c7; --accent:#8a5a2b; --accent-text:#fffcf6;
+    --chip:#efe3cf; --chip-text:#6b4423; --green:#4c7a3b; --red:#b0442e; --amber:#9a6114; --amber-bg:#f6e6c8; --track:#e8dcc8;
+    --sheet-shadow: 0 -8px 32px rgba(59,49,40,.18);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#3b82f6; --accent-text:#fff;
-      --chip:#1e2540; --chip-text:#c7d2fe; --green:#4ade80; --red:#f87171; --amber:#fbbf24; --amber-bg:#3a2d0c; --track:#2a2e36;
+      --bg:#1d1913; --card:#27221b; --text:#efe6d7; --muted:#a8998a; --line:#3a3229; --accent:#cfa06f; --accent-text:#1d1913;
+      --chip:#3a2f23; --chip-text:#ead2b2; --green:#9cc489; --red:#e59a86; --amber:#e3b263; --amber-bg:#3b2e17; --track:#3a3229;
       --sheet-shadow: 0 -8px 32px rgba(0,0,0,.6);
     }
   }
   :root[data-theme="dark"] {
-    --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#3b82f6; --accent-text:#fff;
-    --chip:#1e2540; --chip-text:#c7d2fe; --green:#4ade80; --red:#f87171; --amber:#fbbf24; --amber-bg:#3a2d0c; --track:#2a2e36;
+    --bg:#1d1913; --card:#27221b; --text:#efe6d7; --muted:#a8998a; --line:#3a3229; --accent:#cfa06f; --accent-text:#1d1913;
+    --chip:#3a2f23; --chip-text:#ead2b2; --green:#9cc489; --red:#e59a86; --amber:#e3b263; --amber-bg:#3b2e17; --track:#3a3229;
     --sheet-shadow: 0 -8px 32px rgba(0,0,0,.6);
   }
+  .ico { width:22px; height:22px; stroke:currentColor; fill:none; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  .det { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .det:last-child { border-bottom: none; }
+  .det .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .det .meta { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px; font-size:13px; color: var(--muted); }
+  .det select { font: inherit; font-size:13px; border:1px solid var(--line); border-radius:12px; background: var(--chip); color: var(--chip-text); padding: 4px 8px; min-height:32px; }
+  .det .acts { display:flex; gap:8px; margin-top:10px; }
+  .det .acts .btn { min-height:40px; flex:1; }
+  .det details summary { font-size:12px; color: var(--muted); cursor:pointer; margin-top:6px; }
+  .det details p { font-size:12px; color: var(--muted); margin:6px 0 0; word-break: break-word; }
+  .banner { display:flex; align-items:center; gap:10px; font-size:14px; color: var(--muted); }
+  .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color: var(--accent); border-radius:50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .bigbar { height:8px; background: var(--track); border-radius:4px; overflow:hidden; margin-top:8px; } .bigbar div { height:100%; background: var(--accent); }
   [hidden] { display: none !important; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { background: var(--bg); }
@@ -139,6 +153,15 @@
       <div class="meter" id="meter"><div style="width:0"></div></div>
     </div>
 
+    <div class="card" id="workCard" hidden><div class="banner"><div class="spin"></div><span id="workText"></span></div></div>
+
+    <div class="card review" id="detCard" hidden>
+      <h2><span>Detected payments</span><button class="btn small primary" id="logAll"></button></h2>
+      <p class="hint" style="margin-top:0">Found by the on-device AI in your bank SMS. Check, change the category if needed, then log.</p>
+      <div id="detList"></div>
+      <details id="skippedBox" hidden style="margin-top:8px"><summary class="hint" style="cursor:pointer" id="skippedTitle"></summary><div id="skippedList"></div></details>
+    </div>
+
     <div class="card review" id="reviewCard" hidden>
       <h2><span>Needs your input</span><span class="chip warn" id="reviewCount"></span></h2>
       <div id="reviewList"></div>
@@ -146,15 +169,13 @@
 
     <div class="card">
       <h2>Add spending</h2>
-      <textarea id="input" enterkeyhint="done" autocomplete="off" placeholder="250 swiggy&#10;900 dinner split with Rahul and Priya&#10;…or paste a bank SMS"></textarea>
-      <div class="grid4">
-        <button class="btn tool" id="voice"><b>🎤</b>Speak</button>
-        <button class="btn tool" id="scan"><b>📷</b>Receipt</button>
-        <button class="btn tool" id="paste"><b>📋</b>Paste</button>
-        <button class="btn tool primary" id="add"><b>＋</b>Add</button>
+      <textarea id="input" enterkeyhint="done" autocomplete="off" placeholder="250 swiggy&#10;900 dinner split with Rahul and Priya"></textarea>
+      <div class="grid4" style="grid-template-columns: repeat(3, 1fr)">
+        <button class="btn" id="voice">Speak</button>
+        <button class="btn" id="paste">Paste</button>
+        <button class="btn primary" id="add">Add</button>
       </div>
-      <input type="file" id="receiptFile" accept="image/*,application/pdf" hidden>
-      <p class="hint" id="autoHint" hidden>Turn on automatic capture in Settings so bank SMS and UPI payments are logged without typing.</p>
+      <p class="hint" id="autoHint" hidden>Set up the on-device AI and bank SMS in Settings, and payments will show up here by themselves.</p>
     </div>
 
     <div class="card">
@@ -186,8 +207,7 @@
     </div>
     <div class="card"><h2>By category</h2><div id="cats"></div></div>
     <div class="card">
-      <h2><span>Insights</span><button class="btn small" id="aiInsightsBtn" hidden>✨ AI insights</button></h2>
-      <div id="aiInsights"></div>
+      <h2>Insights</h2>
       <ul class="plain" id="insightList"></ul>
     </div>
     <div class="card">
@@ -249,29 +269,26 @@
       <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Merchants Artha learned from you</summary><div id="learned"></div></details>
     </div>
     <div class="card">
-      <h2>AI features</h2>
-      <div class="switch"><span>Use Claude for receipts, voice, questions & insights</span><input type="checkbox" id="aiToggle"></div>
-      <p class="hint" id="aiNote"></p>
-      <div class="grid2" style="grid-template-columns:1fr auto; margin-top:8px">
-        <input type="password" id="aiKey" placeholder="Claude API key (sk-ant-…)" autocomplete="off" spellcheck="false">
-        <button class="btn" id="aiKeySave">Save</button>
-      </div>
-      <div class="row"><button class="btn small danger" id="aiKeyRemove" hidden>Remove key</button></div>
-      <p class="hint">Get a key at console.anthropic.com. It's stored encrypted with Android Keystore and only used to call Claude. Everything else in Artha works offline without it.</p>
-      <p class="hint">Privacy: Claude only sees what you send for that feature, with account numbers and balances removed. That means a receipt you scan, a sentence you speak or type, a question you ask, or monthly totals. It never sees your full ledger.</p>
+      <h2>On-device AI</h2>
+      <p class="hint" style="margin-top:0">Artha reads your bank SMS with Qwen 2.5 1.5B, a small AI model that runs entirely on this phone. Your messages never leave it.</p>
+      <div class="list-item"><div><div>AI model</div><div class="hint" style="margin:0" id="modelState"></div></div><button class="btn small primary" id="modelBtn"></button></div>
+      <div class="bigbar" id="modelBar" hidden><div style="width:0"></div></div>
+      <div class="row"><button class="btn small" id="modelImport">Import model file</button><button class="btn small danger" id="modelDelete" hidden>Remove model</button></div>
+      <p class="hint">The download is a one-time file of about 1.6 GB, so use Wi-Fi. A safety check makes sure OTPs, failed payments and scheduled AutoPay messages are never counted as spending.</p>
     </div>
     <div class="card" id="captureCard">
-      <h2>Automatic capture</h2>
-      <p class="hint" style="margin-top:0">Pay as usual, and Artha logs it by itself. Messages are read only on this phone. Chats and personal SMS are ignored.</p>
-      <div class="list-item"><div><div>Bank SMS</div><div class="hint" style="margin:0" id="smsState"></div></div><button class="btn small" id="smsBtn"></button></div>
-      <div class="list-item"><div><div>UPI & bank app notifications</div><div class="hint" style="margin:0" id="notifState">GPay, PhonePe, Paytm, BHIM, bank apps</div></div><button class="btn small" id="notifBtn"></button></div>
-      <div class="switch"><span>Quiet notification for each payment logged</span><input type="checkbox" id="notifyLogged"></div>
-      <p class="hint">If Android says “Restricted setting” when you allow SMS or notification access, open <a href="#" id="appInfo">App info</a> → ⋮ → <b>Allow restricted settings</b>, then try again. Android does this for apps installed outside the Play Store.</p>
+      <h2>Bank SMS</h2>
+      <div class="list-item"><div><div>Read new bank SMS</div><div class="hint" style="margin:0" id="smsState"></div></div><button class="btn small" id="smsBtn"></button></div>
+      <div class="switch"><span>Log confident payments without asking</span><input type="checkbox" id="autoLog"></div>
+      <div class="switch"><span>Notify me when payments are detected</span><input type="checkbox" id="notifyLogged"></div>
+      <div class="list-item"><div><div>Import past SMS</div><div class="hint" style="margin:0">Bank messages already on your phone</div></div>
+        <span class="row" style="margin:0;flex-wrap:nowrap"><select class="field" id="smsMonths" style="width:auto;padding:8px"><option value="1">1 month</option><option value="3" selected>3 months</option><option value="6">6 months</option><option value="12">12 months</option></select><button class="btn small" id="smsImport">Import</button></span></div>
+      <p class="hint">Only messages from bank senders (like AX-SARBNK) are read. Texts from people are ignored. If Android says "Restricted setting", open <a href="#" id="appInfo">App info</a>, tap the three-dot menu, choose <b>Allow restricted settings</b>, then try again.</p>
     </div>
     <div class="card">
       <h2>Your data</h2>
       <div class="grid2"><button class="btn" id="exportCsv">Export CSV</button><button class="btn" id="exportJson">Full backup</button></div>
-      <label class="btn" style="display:flex;align-items:center;justify-content:center;margin-top:8px">Import bank CSV<input type="file" id="csv" accept=".csv,text/csv" hidden></label>
+      <label class="btn" style="display:flex;align-items:center;justify-content:center;margin-top:8px">Import statement (CSV or text)<input type="file" id="csv" accept=".csv,.txt,text/csv,text/plain" hidden></label>
       <label class="btn" style="display:flex;align-items:center;justify-content:center;margin-top:8px">Restore a full backup<input type="file" id="restore" accept="application/json,.json" hidden></label>
       <details style="margin-top:12px"><summary class="hint" style="cursor:pointer;color:var(--red)">Delete data…</summary>
         <div style="margin-top:10px">
@@ -299,10 +316,10 @@
 </main>
 
 <nav class="tabs" aria-label="Sections">
-  <button data-tab="home" class="on"><b>⌂</b>Home<span class="badge" id="badge"></span></button>
-  <button data-tab="activity"><b>☰</b>Activity</button>
-  <button data-tab="insights"><b>◔</b>Insights</button>
-  <button data-tab="settings"><b>⚙</b>Settings</button>
+  <button data-tab="home" class="on"><svg class="ico" viewBox="0 0 24 24"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Home<span class="badge" id="badge"></span></button>
+  <button data-tab="activity"><svg class="ico" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Activity</button>
+  <button data-tab="insights"><svg class="ico" viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></svg>Insights</button>
+  <button data-tab="settings"><svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/></svg>Settings</button>
 </nav>
 
 <div class="sheet-bg" id="sheetBg"></div>
@@ -332,7 +349,7 @@ async function api(path, opts = {}) {
   if (r.status !== 200) throw new Error((r.body && r.body.detail) || "Something went wrong");
   return r.body;
 }
-const nativeStatus = () => { try { return Native ? JSON.parse(Native.status()) : { sms: false, notification_access: false, ai_key_set: false, can_lock: false }; } catch { return {}; } };
+const nativeStatus = () => { try { return Native ? JSON.parse(Native.status()) : { sms: false, model_ready: false, can_lock: false }; } catch { return {}; } };
 let toastTimer;
 function toast(msg, undo, label = "Undo") {
   $("toastMsg").textContent = msg; $("toastBtn").hidden = !undo; $("toastBtn").textContent = label;
@@ -387,7 +404,7 @@ function txRow(t) {
   const share = t.my_share != null && t.my_share !== t.amount;
   return `<div class="tx" data-tx="${t.id}">
     <div><div class="m">${esc(t.merchant)}</div>
-      <div class="sub"><span class="chip">${esc(t.category)}</span>${t.needs_review ? '<span class="chip warn">check</span>' : ""}${t.is_recurring ? "<span>↻</span>" : ""}${share ? `<span>your share ${inr(t.my_share)}</span>` : ""}</div></div>
+      <div class="sub"><span class="chip">${esc(t.category)}</span>${t.needs_review ? '<span class="chip warn">check</span>' : ""}${t.is_recurring ? "<span>recurring</span>" : ""}${share ? `<span>your share ${inr(t.my_share)}</span>` : ""}</div></div>
     <div class="amt ${t.kind === "credit" ? "credit" : ""}">${t.kind === "credit" ? "+" : ""}${inr(t.amount)}</div></div>`;
 }
 function grouped(list) {
@@ -412,7 +429,8 @@ async function refresh() {
 }
 
 async function loadHome() {
-  const [s, review, recent] = await Promise.all([api(`/api/summary?month=${localDate().slice(0, 7)}`), api("/api/review"), api("/api/transactions?limit=6")]);
+  const [s, review, recent, det] = await Promise.all([api(`/api/summary?month=${localDate().slice(0, 7)}`), api("/api/review"), api("/api/transactions?limit=6"), api("/api/detected")]);
+  renderDetected(det);
   const b = s.budget;
   $("leftToday").textContent = inr(b.left_today);
   $("leftToday").style.color = b.left_today < 0 ? "var(--red)" : "";
@@ -422,10 +440,11 @@ async function loadHome() {
   $("poolSub").textContent = b.under_budget_streak > 1 ? `${b.under_budget_streak}-day streak under budget` : `since ${dayLabel(b.since)}`;
   const pct = b.daily_allowance ? Math.min(100, b.spent_today / b.daily_allowance * 100) : 0;
   $("meter").firstElementChild.style.width = pct + "%"; $("meter").classList.toggle("over", b.left_today < 0);
-  $("badge").textContent = review.length; $("badge").style.display = review.length ? "flex" : "none";
+  const attention = review.length + det.items.length;
+  $("badge").textContent = attention; $("badge").style.display = attention ? "flex" : "none";
   $("reviewCard").hidden = !review.length; $("reviewCount").textContent = review.length;
   $("reviewList").innerHTML = review.map(reviewItem).join("");
-  const ns = nativeStatus(); $("autoHint").hidden = !Native || ns.sms || ns.notification_access;
+  const ns = nativeStatus(); $("autoHint").hidden = !Native || (ns.sms && ns.model_ready);
   $("recent").innerHTML = recent.map(txRow).join("") || '<p class="hint">No spending yet. Pay with UPI and it shows up here, or add one above.</p>';
 }
 function reviewItem(t) {
@@ -455,54 +474,75 @@ $("reviewList").onclick = async (e) => {
 };
 
 // ---------- capture ----------
-async function addText(text, smart = false) {
+async function addText(text) {
   text = (text || "").trim(); if (!text) return;
+  toast("Reading…");
   try {
-    const r = await api("/api/ingest", { json: { text, smart } });
+    const r = await api("/api/ingest", { json: { text, mode: "note" } });
     const ids = r.added.map(t => t.id);
-    let msg = r.added.length === 1 ? `${inr(r.added[0].amount)} · ${r.added[0].merchant} · ${r.added[0].category}` : `Added ${r.added.length}`;
-    if (r.added.length === 1 && r.added[0].needs_review) msg += ". Needs a quick answer";
-    if (r.duplicates) msg += ` · ${r.duplicates} already saved`;
-    if (r.ignored) msg += ` · ignored ${r.ignored} non-payment message${r.ignored > 1 ? "s" : ""}`;
-    if (!r.added.length && !r.duplicates) msg = r.ignored ? "That's not a completed payment (OTP, reminder or failed)" : (r.notes[0] || "Couldn't find an amount in that");
-    $("input").value = r.skipped.join("\n");
+    const msg = !r.added.length ? "Couldn't find a payment in that" : r.added.length === 1 ? `${inr(r.added[0].amount)} · ${r.added[0].merchant} · ${r.added[0].category}` : `Added ${r.added.length}`;
+    if (r.added.length) $("input").value = "";
     toast(msg, ids.length ? () => Promise.all(ids.map(id => api(`/api/transactions/${id}`, { method: "DELETE" }))) : null);
     refresh();
   } catch (e) { fail(e); }
 }
+async function addSms(text) {
+  text = (text || "").trim(); if (!text) return;
+  toast("Reading message…");
+  try {
+    const r = await api("/api/ingest", { json: { text, mode: "sms" } });
+    toast(r.queued ? "Check it under Detected payments" : "That message was already read");
+    $("input").value = ""; refresh();
+  } catch (e) { fail(e); }
+}
 $("add").onclick = () => addText($("input").value);
 $("paste").onclick = async () => {
-  try { const t = Native ? Native.clipboard() : await navigator.clipboard.readText(); if (!t.trim()) return toast("Clipboard is empty"); $("input").value = t; addText(t); }
-  catch { $("input").focus(); toast("Long-press the box and tap Paste"); }
+  const typed = $("input").value.trim();
+  if (typed) return addSms(typed);
+  try { const t = Native ? Native.clipboard() : await navigator.clipboard.readText(); if (!t.trim()) return toast("Copy a bank SMS first"); addSms(t); }
+  catch { $("input").focus(); toast("Paste the SMS in the box, then tap Paste SMS"); }
 };
-
-// voice: Android's speech recognizer; Claude understands it when AI is on, otherwise the local parser does
-window.__arthaVoice = (text) => { if (text && text.trim()) { $("input").value = text; addText(text, true); } };
+window.__arthaVoice = (text) => { if (text && text.trim()) { $("input").value = text; addText(text); } };
 $("voice").onclick = () => { if (Native) Native.voice(); else toast("Voice works in the Android app"); };
 
-// receipt / invoice scanning
-$("scan").onclick = () => {
-  if (!SETTINGS.ai_enabled || !SETTINGS.ai_available) return toast("Add your Claude key in Settings to scan receipts", () => show("settings"), "Open");
-  $("receiptFile").click();
-};
-async function shrink(file) {
-  if (!file.type.startsWith("image/") || file.size < 1.5e6) return file;
-  const img = await createImageBitmap(file); const scale = Math.min(1, 1800 / Math.max(img.width, img.height));
-  const c = document.createElement("canvas"); c.width = img.width * scale; c.height = img.height * scale;
-  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-  return new Promise(r => c.toBlob(b => r(new File([b], "receipt.jpg", { type: "image/jpeg" })), "image/jpeg", 0.85));
+// ---------- detected payments (AI findings waiting for your OK) ----------
+function detItem(d, skipped) {
+  const upcoming = d.type === "upcoming", credit = d.type === "credit";
+  const label = upcoming ? "Upcoming" : credit ? "Received" : "Paid";
+  const when = dayLabel(String(d.received_at).slice(0, 10));
+  const cats = CATS.map(c => `<option ${c === d.category ? "selected" : ""}>${esc(c)}</option>`).join("");
+  return `<div class="det" data-det="${d.id}">
+    <div class="top"><span>${esc(d.party || "Unknown")}</span><span class="${credit ? "credit" : ""}">${d.amount ? (credit ? "+" : "") + inr(d.amount) : ""}</span></div>
+    <div class="meta"><span class="chip ${upcoming ? "warn" : ""}">${label}</span><span>${when}</span>
+      ${skipped ? "" : `<select data-detcat="${d.id}" aria-label="Category">${cats}</select>`}
+      ${!skipped && !d.confident ? '<span class="chip warn">please check</span>' : ""}</div>
+    ${d.reason ? `<div class="hint" style="font-size:13px">${esc(d.reason)}</div>` : ""}
+    <details><summary>Original message</summary><p>${esc(d.body)}</p></details>
+    <div class="acts">${skipped ? `<button class="btn" data-detact="log">Log anyway</button>`
+      : `<button class="btn" data-detact="skip">Skip</button><button class="btn primary" data-detact="log">${upcoming ? "Track" : "Log"}</button>`}</div>
+  </div>`;
 }
-$("receiptFile").onchange = async (e) => {
-  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  toast("Reading receipt…");
+function renderDetected(det) {
+  const items = det.items || [], skipped = det.skipped || [];
+  $("detCard").hidden = !items.length && !skipped.length;
+  $("detList").innerHTML = items.map(d => detItem(d, false)).join("") || '<p class="hint">Nothing waiting. You are all caught up.</p>';
+  $("logAll").hidden = items.length < 2; $("logAll").textContent = `Log all (${items.length})`;
+  $("skippedBox").hidden = !skipped.length; $("skippedTitle").textContent = `Skipped messages (${skipped.length})`;
+  $("skippedList").innerHTML = skipped.map(d => detItem(d, true)).join("");
+  $("workCard").hidden = !det.pending; $("workText").textContent = det.pending ? `Reading ${det.pending} bank message${det.pending > 1 ? "s" : ""} on your phone…` : "";
+  if (det.pending) { clearTimeout(window.__poll); window.__poll = setTimeout(() => tab === "home" && refresh(), 4000); }
+}
+$("detCard").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-detact]"); if (!b) return;
+  const row = b.closest("[data-det]"), id = row.dataset.det, sel = row.querySelector("[data-detcat]");
   try {
-    const small = await shrink(f);
-    const data = await new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result.split(",")[1]); fr.onerror = rej; fr.readAsDataURL(small); });
-    const r = await api("/api/receipt", { json: { mime: small.type || f.type, data } });
-    const t = r.transaction;
-    toast(`${inr(t.amount)} · ${t.merchant} · ${t.category}`, () => api(`/api/transactions/${t.id}`, { method: "DELETE" }));
+    if (b.dataset.detact === "skip") await api(`/api/detected/${id}`, { json: { action: "skip" } });
+    else { const r = await api(`/api/detected/${id}`, { json: { action: "log", category: sel ? sel.value : undefined } }); toast(r && r.subscription ? `${r.subscription} added to subscriptions` : "Logged"); }
     refresh();
   } catch (err) { fail(err); }
+});
+$("logAll").onclick = async () => {
+  try { const r = await api("/api/detected/log-all", { method: "POST" }); toast(`Logged ${r.logged}`); refresh(); } catch (e) { fail(e); }
 };
 
 // ---------- activity ----------
@@ -529,7 +569,6 @@ async function loadInsights() {
   const cats = Object.entries(st.by_category).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...cats.map(c => c[1]));
   $("cats").innerHTML = cats.map(([c, v]) => `<div class="bar"><span class="name">${esc(c)}</span><div class="track"><div class="fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div><span class="num">${inr(v)}</span></div>`).join("") || '<p class="hint">No spending this month.</p>';
   $("insightList").innerHTML = ins.insights.map(i => `<li>${esc(i)}</li>`).join("");
-  $("aiInsightsBtn").hidden = !ins.ai_ready; $("aiInsights").innerHTML = "";
   const rec = ins.recommendations;
   $("recs").innerHTML = `<div class="list-item"><div><div>Suggested daily allowance</div><div class="hint" style="margin:0">Based on your ${rec.basis} (${rec.based_on.join(", ")}). Currently ${inr(rec.current_daily_allowance)}.</div></div>
       <button class="btn small primary" id="applyAllowance" data-v="${rec.suggested_daily_allowance}">Use ${inr(rec.suggested_daily_allowance)}</button></div>` +
@@ -538,7 +577,7 @@ async function loadInsights() {
   $("subs").innerHTML = (subs.monthly_total ? `<p class="answer" style="margin-top:0">Subscriptions: ${inr(subs.monthly_total)}/month · ${inr(subs.yearly_total)}/year</p>` : "") +
     (subs.fixed_monthly_total ? `<p class="hint" style="margin-top:0">Plus ${inr(subs.fixed_monthly_total)}/month in recurring rent, bills and investments</p>` : "") +
     (subs.subscriptions.map(s => `<div class="list-item"><div><div><a href="#" data-merchant="${esc(s.name)}">${esc(s.name)}</a> ${s.status !== "active" ? `<span class="chip ${s.status === "suggested" ? "warn" : ""}">${s.status}</span>` : ""}</div>
-        <div class="hint" style="margin:0">${inr(s.amount)} ${s.period}${s.next_date && s.status === "active" ? (s.days_until < 0 ? ` · was due ${dayLabel(s.next_date)}` : ` · next ${dayLabel(s.next_date)}${s.days_until <= 3 ? " ⚠" : ""}`) : ""}</div></div>
+        <div class="hint" style="margin:0">${inr(s.amount)} ${s.period}${s.next_date && s.status === "active" ? (s.days_until < 0 ? ` · was due ${dayLabel(s.next_date)}` : ` · next ${dayLabel(s.next_date)}${s.days_until <= 3 ? " (soon)" : ""}`) : ""}</div></div>
         <div class="row" style="margin:0;flex-wrap:nowrap">${s.status === "suggested" ? `<button class="btn small" data-sub="${s.id}" data-st="active">Yes</button><button class="btn small" data-sub="${s.id}" data-st="ignored">No</button>`
           : s.status === "active" ? `<button class="btn small" data-sub="${s.id}" data-st="cancelled">Cancelled</button>` : `<button class="btn small" data-sub="${s.id}" data-st="active">Active</button>`}</div></div>`).join("")
      || '<p class="hint">No recurring payments detected yet. They show up after two similar charges, or one charge from a known service like Netflix.</p>');
@@ -558,14 +597,6 @@ $("v-insights").addEventListener("click", async (e) => {
 $("scanSubs").onclick = async () => { try { await api("/api/subscriptions/scan", { method: "POST" }); toast("Scanned for recurring payments"); refresh(); } catch (e) { fail(e); } };
 $("subAdd").onclick = async () => {
   try { await api("/api/subscriptions", { json: { name: $("subName").value, amount: +$("subAmt").value, period: $("subPeriod").value } }); $("subName").value = $("subAmt").value = ""; refresh(); } catch (e) { fail(e); }
-};
-$("aiInsightsBtn").onclick = async () => {
-  $("aiInsights").innerHTML = '<p class="hint">Writing your insights…</p>';
-  try {
-    const r = await api(`/api/insights/ai?month=${month}`, { method: "POST" });
-    $("aiInsights").innerHTML = `<p class="answer" style="margin-top:0">${esc(r.headline)}</p><ul class="plain">${r.insights.map(i => `<li>${esc(i)}</li>`).join("")}</ul>
-      <p class="answer">Recommendations</p><ul class="plain">${r.recommendations.map(i => `<li>${esc(i)}</li>`).join("")}</ul><hr style="border:none;border-top:1px solid var(--line);margin:12px 0">`;
-  } catch (e) { $("aiInsights").innerHTML = ""; fail(e); }
 };
 
 // ---------- sheets: transaction detail & merchant history ----------
@@ -632,18 +663,20 @@ async function loadSettings() {
   applyTheme(store.get("artha_theme") || "system");
   $("allowance").value = s.daily_allowance; $("goal").value = s.savings_goal_pct;
   $("excluded").innerHTML = CATS.map(c => `<button class="${s.excluded_categories.includes(c) ? "on" : ""}" data-ex="${esc(c)}">${esc(c)}</button>`).join("");
-  $("customCats").innerHTML = s.custom_categories.map(c => `<button data-rmcat="${esc(c)}">${esc(c)} ✕</button>`).join("") || '<span class="hint">No custom categories yet.</span>';
+  $("customCats").innerHTML = s.custom_categories.map(c => `<button data-rmcat="${esc(c)}">${esc(c)} &times;</button>`).join("") || '<span class="hint">No custom categories yet.</span>';
   $("ruleCat").innerHTML = CATS.map(c => `<option>${esc(c)}</option>`).join("");
-  $("rules").innerHTML = rules.rules.map(r => `<div class="list-item"><span>${esc(r.match_type)} “${esc(r.pattern)}”${r.min_amount != null ? ` ≥ ${inr(r.min_amount)}` : ""} → <b>${esc(r.category)}</b></span><button class="btn small danger" data-rmrule="${r.id}">✕</button></div>`).join("");
+  $("rules").innerHTML = rules.rules.map(r => `<div class="list-item"><span>${esc(r.match_type)} “${esc(r.pattern)}”${r.min_amount != null ? ` ≥ ${inr(r.min_amount)}` : ""} → <b>${esc(r.category)}</b></span><button class="btn small danger" data-rmrule="${r.id}">&times;</button></div>`).join("");
   $("learned").innerHTML = rules.learned.map(l => `<div class="list-item"><span>${esc(l.merchant)} → ${esc(l.category)}</span><button class="btn small" data-forget="${esc(l.merchant)}">Forget</button></div>`).join("") || '<p class="hint">Nothing learned yet.</p>';
-  $("aiToggle").checked = !!s.ai_enabled; $("aiToggle").disabled = !s.ai_available;
   const ns = nativeStatus();
-  $("aiNote").textContent = s.ai_available ? "" : "Add your Claude API key below to turn these on.";
-  $("aiKeyRemove").hidden = !ns.ai_key_set; $("aiKey").placeholder = ns.ai_key_set ? "Key saved ✓ (enter a new one to replace)" : "Claude API key (sk-ant-…)";
+  const pct = ns.model_download_pct;
+  $("modelState").textContent = ns.model_ready ? "Ready. Runs offline on this phone" : pct != null ? `Downloading… ${pct}%` : `Not installed (${(ns.model_size_gb || 1.6).toFixed(1)} GB)`;
+  $("modelBtn").hidden = !!ns.model_ready || pct != null; $("modelBtn").textContent = "Download";
+  $("modelBar").hidden = pct == null; $("modelBar").firstElementChild.style.width = (pct || 0) + "%";
+  $("modelDelete").hidden = !ns.model_ready; $("modelImport").hidden = !!ns.model_ready;
+  if (pct != null) { clearTimeout(window.__mpoll); window.__mpoll = setTimeout(() => tab === "settings" && refresh(), 2000); }
   $("smsState").textContent = ns.sms ? (s.auto_capture_sms ? "On" : "Paused") : "Needs permission";
   $("smsBtn").textContent = ns.sms ? (s.auto_capture_sms ? "Pause" : "Resume") : "Allow";
-  $("notifBtn").textContent = ns.notification_access ? (s.auto_capture_notifications ? "Pause" : "Resume") : "Allow";
-  $("notifState").textContent = ns.notification_access ? (s.auto_capture_notifications ? "On · GPay, PhonePe, Paytm, BHIM, bank apps" : "Paused") : "Needs notification access";
+  $("autoLog").checked = !!s.auto_log_confident;
   $("notifyLogged").checked = !!s.notify_logged;
   $("lockRow").hidden = !ns.can_lock; $("appLock").checked = !!s.app_lock; $("hideRecents").checked = s.hide_in_recents !== false;
   $("version").textContent = ns.version ? `Artha ${ns.version}` : "";
@@ -674,17 +707,13 @@ $("addRule").onclick = async () => {
 };
 $("rules").onclick = async (e) => { const b = e.target.closest("[data-rmrule]"); if (b) { await api(`/api/rules/${b.dataset.rmrule}`, { method: "DELETE" }); refresh(); } };
 $("learned").onclick = async (e) => { const b = e.target.closest("[data-forget]"); if (b) { await api(`/api/learned/${encodeURIComponent(b.dataset.forget)}`, { method: "DELETE" }); refresh(); } };
-$("aiToggle").onchange = async (e) => { try { SETTINGS = await api("/api/settings", { method: "PUT", json: { ai_enabled: e.target.checked } }); toast(e.target.checked ? "AI features on" : "AI features off"); } catch (err) { fail(err); } };
 const setting = async (obj, msg) => { try { SETTINGS = await api("/api/settings", { method: "PUT", json: obj }); if (msg) toast(msg); refresh(); } catch (e) { fail(e); } };
-$("aiKeySave").onclick = async () => {
-  const k = $("aiKey").value.trim(); if (!k) return;
-  if (!/^sk-ant-/.test(k)) return toast("That doesn't look like a Claude API key");
-  if (Native) Native.setApiKey(k); $("aiKey").value = "";
-  await setting({ ai_enabled: true }, "Key saved. AI features are on");
-};
-$("aiKeyRemove").onclick = async () => { if (Native) Native.clearApiKey(); await setting({ ai_enabled: false }, "Key removed"); };
+$("modelBtn").onclick = () => { if (Native) { Native.downloadModel(); toast("Downloading the AI model. You can keep using Artha"); setTimeout(refresh, 1500); } };
+$("modelImport").onclick = () => { if (Native) Native.importModel(); };
+$("modelDelete").onclick = () => { if (confirm("Remove the AI model from this phone? New SMS will wait until you download it again.")) { Native.deleteModel(); refresh(); } };
 $("smsBtn").onclick = () => { const ns = nativeStatus(); if (!ns.sms) { if (Native) Native.requestSms(); } else setting({ auto_capture_sms: !SETTINGS.auto_capture_sms }); };
-$("notifBtn").onclick = () => { const ns = nativeStatus(); if (!ns.notification_access) { if (Native) Native.openNotificationAccess(); } else setting({ auto_capture_notifications: !SETTINGS.auto_capture_notifications }); };
+$("autoLog").onchange = (e) => setting({ auto_log_confident: e.target.checked }, e.target.checked ? "Confident payments will be logged automatically" : "Every payment will wait for your OK");
+$("smsImport").onclick = () => { if (!Native) return; if (!nativeStatus().model_ready) return toast("Download the AI model first"); Native.importSms(+$("smsMonths").value); };
 $("notifyLogged").onchange = (e) => { if (e.target.checked && Native && !nativeStatus().post_notifications) Native.requestNotifications(); setting({ notify_logged: e.target.checked }); };
 $("appInfo").onclick = (e) => { e.preventDefault(); if (Native) Native.openAppInfo(); };
 $("appLock").onchange = (e) => setting({ app_lock: e.target.checked }, e.target.checked ? "Artha will ask for your fingerprint when opened" : "App lock off");
@@ -700,7 +729,11 @@ $("exportCsv").onclick = () => download("/api/export.csv");
 $("exportJson").onclick = () => download("/api/export.json");
 $("csv").onchange = async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  try { const r = await api("/api/import/csv", { json: { text: await f.text() } }); toast(`Imported ${r.added}, skipped ${r.skipped}`); } catch (err) { fail(err); }
+  try {
+    const r = await api("/api/import/text", { json: { text: await f.text() } });
+    if (Native) Native.analyze();
+    toast(r.queued ? `Reading ${r.queued} rows. They'll appear under Detected payments` : "Nothing new in that file"); show("home");
+  } catch (err) { fail(err); }
 };
 $("restore").onchange = async (e) => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;

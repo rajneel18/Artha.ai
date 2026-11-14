@@ -43,6 +43,12 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
                 merchant_key TEXT NOT NULL UNIQUE, name TEXT NOT NULL, amount REAL NOT NULL,
                 period TEXT NOT NULL DEFAULT 'monthly', category TEXT, last_date TEXT, next_date TEXT,
                 status TEXT NOT NULL DEFAULT 'active', source TEXT NOT NULL DEFAULT 'detected')""",
+            """CREATE TABLE IF NOT EXISTS detected (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL, body TEXT NOT NULL, header TEXT, sender TEXT, received_at TEXT NOT NULL,
+                raw_hash TEXT UNIQUE, status TEXT NOT NULL DEFAULT 'pending',
+                type TEXT, amount REAL, party TEXT, category TEXT, date TEXT, confident INTEGER, reason TEXT,
+                split_with TEXT, split_ways INTEGER, tx_id INTEGER, created_at TEXT NOT NULL DEFAULT (datetime('now')))""",
+            "CREATE INDEX IF NOT EXISTS idx_detected_status ON detected(status)",
             """CREATE TABLE IF NOT EXISTS splits (id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tx_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE, person TEXT NOT NULL,
                 amount REAL NOT NULL, settled INTEGER NOT NULL DEFAULT 0, settled_at TEXT)""",
@@ -55,14 +61,13 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             "daily_allowance" to 500.0,
             "excluded_categories" to listOf("Rent", "Bills & Utilities", "Investments", "Transfers"),
             "custom_categories" to emptyList<String>(),
-            "ai_enabled" to false,
             "savings_goal_pct" to 20L,
             "budget_start" to null,
             "auto_capture_sms" to true,
-            "auto_capture_notifications" to true,
             "notify_logged" to true,
             "app_lock" to false,
             "hide_in_recents" to true,
+            "auto_log_confident" to false,
         )
         val FIXED = setOf("Rent", "Bills & Utilities", "Investments", "Transfers", "Education")
         val REVIEW_QUESTIONS = mapOf(
@@ -247,9 +252,9 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         val total = db.one("SELECT amount FROM transactions WHERE id=?", txId)?.d("amount") ?: throw ApiError(404, "Transaction not found")
         db.exec("DELETE FROM splits WHERE tx_id=? AND settled=0", txId)
         val others: Map<String, Double> = if (amounts != null) {
-            amounts.filter { it.key.isNotBlank() && it.value > 0 }.map { Parser.titleCase(it.key.trim()) to round2(it.value) }.toMap()
+            amounts.filter { it.key.isNotBlank() && it.value > 0 }.map { titleCase(it.key.trim()) to round2(it.value) }.toMap()
         } else {
-            val ps = people.map { it.trim() }.filter { it.isNotEmpty() }.map { Parser.titleCase(it) }.toMutableList()
+            val ps = people.map { it.trim() }.filter { it.isNotEmpty() }.map { titleCase(it) }.toMutableList()
             val n = max(ways ?: 0, ps.size + 1)
             while (ps.size < n - 1) ps.add("Friend ${ps.size + 1}")
             val share = round2(total / n)
@@ -569,13 +574,13 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     }
 
     // ---------------- deletion ----------------
-    val ALL_TABLES = listOf("splits", "transactions", "subscriptions", "rules", "merchant_rules", "settings", "allowance_history")
+    val ALL_TABLES = listOf("splits", "transactions", "subscriptions", "rules", "merchant_rules", "settings", "allowance_history", "detected")
 
     fun deleteData(scope: String, from: String?, to: String?): Long {
         db.transaction {
             when (scope) {
                 "everything" -> ALL_TABLES.forEach { db.exec("DELETE FROM $it") }
-                "transactions" -> listOf("splits", "transactions", "subscriptions").forEach { db.exec("DELETE FROM $it") }
+                "transactions" -> listOf("splits", "transactions", "subscriptions", "detected").forEach { db.exec("DELETE FROM $it") }
                 "range" -> {
                     if (from == null || to == null) throw ApiError(400, "Pick a start and end date")
                     db.exec("DELETE FROM transactions WHERE date BETWEEN ? AND ?", from, to)
@@ -586,6 +591,82 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         }
         db.vacuum()
         return db.count("SELECT COUNT(*) FROM transactions")
+    }
+
+    // ---------------- detected queue (AI findings waiting for your OK) ----------------
+    fun learnedMap(): Map<String, String> = db.query("SELECT merchant, category FROM merchant_rules ORDER BY rowid DESC LIMIT 15")
+        .associate { titleCase(it.s("merchant")!!) to it.s("category")!! }
+
+    /** Adds a message or statement row to the queue. Returns false if it was already queued before. */
+    fun enqueue(body: String, source: String, receivedAt: java.time.LocalDateTime, sender: String? = null, header: String? = null): Boolean {
+        val text = body.trim(); if (text.isEmpty()) return false
+        return db.insert("INSERT INTO detected(source, body, header, sender, received_at, raw_hash) VALUES (?,?,?,?,?,?)",
+            source, text, header, sender, receivedAt.toString(), sha256((header ?: "") + "|" + text)) > 0
+    }
+
+    fun pendingCount(): Long = db.count("SELECT COUNT(*) FROM detected WHERE status='pending'")
+
+    /** Runs the AI on the next queued item. Returns false when the queue is empty. */
+    fun analyzeNext(ex: Extractor): Boolean {
+        val r = db.one("SELECT * FROM detected WHERE status='pending' ORDER BY id LIMIT 1") ?: return false
+        val id = r.l("id")!!
+        val cats = allCategories(); val known = learnedMap()
+        val v = try {
+            if (r.s("source") == "import" && !r.s("header").isNullOrBlank()) ex.fromRow(r.s("header")!!, r.s("body")!!, cats, known)
+            else ex.fromSms(r.s("body")!!, cats, known)
+        } catch (e: ModelMissing) { throw e } catch (e: Exception) { Extractor.Verdict(null, "The AI couldn't read this message") }
+        val it = v.item
+        // Your rules and corrections take priority over the AI's category guess.
+        val cat = it?.let { item -> Categorizer.categorize(r.s("body"), item.party, learned(), rulesTyped(), item.amount).takeIf { c -> c != "Other" } ?: item.category }
+        val status = when { it == null -> "skipped"; it.type == "ignore" -> "skipped"; else -> "analyzed" }
+        db.exec("UPDATE detected SET status=?, type=?, amount=?, party=?, category=?, date=?, confident=?, reason=?, split_with=?, split_ways=? WHERE id=?",
+            status, it?.type, it?.amount, it?.party, cat, it?.date?.toString(), if (it?.confident == true) 1L else 0L, v.reason,
+            it?.splitWith?.joinToString(","), it?.splitWays?.toLong(), id)
+        if (status == "analyzed" && settings()["auto_log_confident"] == true && it!!.confident && it.type != "upcoming" && v.reason == null) logDetected(id, emptyMap())
+        return true
+    }
+
+    fun detected(): Map<String, Any?> = mapOf(
+        "pending" to pendingCount(),
+        "items" to db.query("SELECT * FROM detected WHERE status='analyzed' ORDER BY received_at DESC, id DESC LIMIT 300"),
+        "skipped" to db.query("SELECT * FROM detected WHERE status='skipped' ORDER BY received_at DESC, id DESC LIMIT 100"),
+    )
+
+    /** Logs one detected item (with any edits you made). Upcoming payments go to subscriptions, not spending. */
+    fun logDetected(id: Long, edits: Map<String, Any?>): Map<String, Any?>? {
+        val r = db.one("SELECT * FROM detected WHERE id=? AND status IN ('analyzed','skipped')", id) ?: throw ApiError(404, "Not found")
+        val type = (edits["type"] as? String) ?: r.s("type")?.takeIf { it != "ignore" } ?: "debit"
+        val amount = (edits["amount"] as? Number)?.toDouble() ?: r.d("amount")?.takeIf { it > 0 } ?: throw ApiError(400, "Enter the amount first")
+        val party = (edits["party"] as? String)?.takeIf { it.isNotBlank() } ?: r.s("party") ?: "Unknown"
+        val cat = (edits["category"] as? String) ?: r.s("category") ?: "Other"
+        val received = java.time.LocalDateTime.parse(r.s("received_at")).toLocalDate()
+        // SMS dates come from the phone's own timestamp; statement rows use the date the AI read from the row.
+        val d = if (r.s("source") == "import") r.s("date")?.let { try { clampDate(LocalDate.parse(it)) } catch (_: Exception) { null } } ?: received else received
+        if (type == "upcoming") {
+            val key = Categorizer.merchantKey(party)
+            val next = r.s("date")?.let { try { LocalDate.parse(it) } catch (_: Exception) { null } } ?: received
+            db.exec("INSERT INTO subscriptions(merchant_key, name, amount, period, category, next_date, status, source) VALUES (?,?,?, 'monthly', ?, ?, 'active', 'mandate') " +
+                "ON CONFLICT(merchant_key) DO UPDATE SET amount=excluded.amount, next_date=excluded.next_date, status='active'",
+                key, party, amount, cat, next.toString())
+            db.exec("UPDATE detected SET status='logged' WHERE id=?", id)
+            return mapOf("subscription" to party)
+        }
+        val split = r.s("split_with")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
+        val tx = record(d, amount, if (type == "credit") "credit" else "debit", party, r.s("body") ?: party,
+            if (r.s("source") == "import") "import" else "sms", cat.takeIf { it in allCategories() }, raw = null,
+            splitWith = split, splitWays = r.l("split_ways")?.toInt(), confident = true)
+        if (edits["category"] != null && tx != null) setCategory(tx["id"] as Long, cat) // remember your correction
+        db.exec("UPDATE detected SET status='logged', tx_id=? WHERE id=?", tx?.get("id"), id)
+        return tx
+    }
+
+    fun skipDetected(id: Long) = db.exec("UPDATE detected SET status='skipped', reason=COALESCE(reason, 'Skipped by you') WHERE id=?", id)
+
+    fun logAllDetected(): Int {
+        val ids = db.query("SELECT id FROM detected WHERE status='analyzed' ORDER BY received_at, id").mapNotNull { it.l("id") }
+        var n = 0
+        for (id in ids) try { logDetected(id, emptyMap()); n++ } catch (_: ApiError) {}
+        return n
     }
 
     /** Replaces everything with a backup made by "Full backup" (export.json). Unknown tables/columns are ignored. */

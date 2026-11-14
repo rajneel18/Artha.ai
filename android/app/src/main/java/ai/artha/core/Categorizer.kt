@@ -1,42 +1,11 @@
 package ai.artha.core
 
-/** Rule-based categorizer: your rules -> merchants you corrected -> built-in keywords. */
+/** Applies your own rules and the merchants you corrected. Everything else is categorized by the on-device AI. */
 object Categorizer {
     val CATEGORIES = listOf(
         "Food & Dining", "Groceries", "Transport", "Fuel", "Shopping", "Bills & Utilities", "Rent", "Entertainment",
         "Health", "Education", "Travel", "Investments", "Transfers", "Personal Care", "Other",
     )
-
-    private val KEYWORDS: Map<String, List<String>> = mapOf(
-        "Food & Dining" to listOf("swiggy", "zomato", "restaurant", "cafe", "coffee", "starbucks", "dominos", "domino",
-            "pizza", "mcdonald", "kfc", "burger", "biryani", "dinner", "lunch", "breakfast", "snacks", "tea", "chai",
-            "eatfit", "dunzo food", "barbeque", "hotel food", "canteen"),
-        "Groceries" to listOf("blinkit", "zepto", "bigbasket", "big basket", "instamart", "dmart", "d-mart", "grocery",
-            "groceries", "reliance fresh", "more supermarket", "jiomart", "vegetables", "milk", "kirana", "supermarket", "fruits"),
-        "Transport" to listOf("uber", "ola", "rapido", "metro", "auto", "cab", "taxi", "bus", "irctc", "train",
-            "local train", "parking", "toll", "fastag", "namma yatri"),
-        "Fuel" to listOf("petrol", "diesel", "fuel", "hpcl", "bpcl", "indian oil", "iocl", "shell", "cng"),
-        "Shopping" to listOf("amazon", "flipkart", "myntra", "ajio", "meesho", "nykaa", "croma", "decathlon", "shopping",
-            "clothes", "shoes", "lenskart", "ikea", "tata cliq"),
-        "Bills & Utilities" to listOf("electricity", "bescom", "msedcl", "tata power", "adani electricity", "water bill",
-            "gas bill", "broadband", "wifi", "airtel", "jio", "vodafone", "vi recharge", "bsnl", "recharge", "mobile bill",
-            "postpaid", "dth", "tata play", "act fibernet", "bill", "insurance", "lic premium"),
-        "Rent" to listOf("rent", "landlord", "nobroker", "maintenance", "society"),
-        "Entertainment" to listOf("netflix", "prime video", "hotstar", "spotify", "youtube premium", "bookmyshow", "pvr",
-            "inox", "movie", "concert", "gaming", "steam", "playstation", "sonyliv", "jiocinema"),
-        "Health" to listOf("pharmacy", "medical", "medicine", "apollo", "pharmeasy", "1mg", "netmeds", "hospital", "clinic",
-            "doctor", "lab test", "practo", "gym", "cult.fit", "cultfit"),
-        "Education" to listOf("course", "udemy", "coursera", "books", "tuition", "fees", "college", "school", "exam"),
-        "Travel" to listOf("makemytrip", "goibibo", "cleartrip", "indigo", "air india", "vistara", "akasa", "spicejet",
-            "flight", "hotel", "oyo", "airbnb", "booking.com", "ixigo", "redbus"),
-        "Investments" to listOf("zerodha", "groww", "upstox", "sip", "mutual fund", "kuvera", "coin", "ppf", "nps",
-            "smallcase", "angel one", "fd ", "fixed deposit"),
-        "Transfers" to listOf("transfer", "neft", "imps", "sent to", "self transfer", "credit card payment", "cc payment"),
-        "Personal Care" to listOf("salon", "haircut", "spa", "urban company", "parlour", "barber"),
-    )
-    private val COMPILED = KEYWORDS.mapValues { (_, ws) ->
-        ws.map { w -> w to Regex("(?<![a-z0-9])" + Regex.escape(w) + "(?![a-z0-9])") }
-    }
 
     fun norm(text: String?): String = (text ?: "").lowercase().replace(Regex("\\s+"), " ").trim()
     fun merchantKey(merchant: String?): String = norm(merchant)
@@ -64,20 +33,15 @@ object Categorizer {
             learned[m]?.let { return it }
             for ((k, c) in learned) if (k.isNotEmpty() && (k in m || m in k)) return c
         }
-        val hay = " ${norm(merchant)} ${norm(text)} "
-        var best = "Other"
-        var bestLen = 0
-        for ((cat, ws) in COMPILED) for ((w, rx) in ws) {
-            if (w.length > bestLen && rx.containsMatchIn(hay)) { best = cat; bestLen = w.length }
-        }
-        return best
+        return "Other" // the on-device AI picks categories; this only applies your rules and corrections
     }
 }
 
 /** Masks account/card numbers and drops balances/OTPs before anything is stored or sent anywhere. */
 object Redact {
     private val LONG_NUM = Regex("(?<![\\d.,])(\\d{4,})(\\d{4})(?![\\d.,])")
-    private val BALANCE = Regex("(?i)\\b(avl\\.?\\s*bal|available\\s+balance|avl\\.?\\s*lmt|available\\s+limit|bal)\\b[^.;\\n]*")
+    // Drops "Avl Bal Rs 1,234.56", "Your Current Balance is INR 84413.27", "Avl Lmt: ..." up to the end of that sentence.
+    private val BALANCE = Regex("(?i)\\b(avl\\.?\\s*bal|(?:available|current|closing|clear)\\s+bal(?:ance)?|balance|avl\\.?\\s*lmt|available\\s+limit|bal)\\b.*?(?=\\.\\s|;|\\n|$)")
     private val OTP = Regex("(?i)\\b(otp|one[- ]time password|verification code)\\b[^.;\\n]*")
 
     fun apply(text: String?): String {

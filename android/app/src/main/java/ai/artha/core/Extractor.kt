@@ -3,7 +3,7 @@ package ai.artha.core
 import kotlinx.serialization.json.Json
 import java.time.LocalDate
 
-/** A small language model running on the phone (Gemma 3 1B). Takes one user turn, returns the model's reply. */
+/** A small language model running on the phone (Qwen 2.5 1.5B). Takes one user turn, returns the model's reply. */
 interface LocalModel {
     fun available(): Boolean
     fun generate(prompt: String): String
@@ -34,7 +34,7 @@ class Extractor(private val model: LocalModel) {
     // ---------- prompts ----------
     private fun categoryLine(categories: List<String>) = "Categories: " + categories.joinToString(", ")
     private fun memoryLine(known: Map<String, String>) =
-        if (known.isEmpty()) "" else "Known payees and their categories: " + known.entries.take(25).joinToString("; ") { "${it.key} = ${it.value}" } + "\n"
+        if (known.isEmpty()) "" else "Known payees and their categories: " + known.entries.take(15).joinToString("; ") { "${it.key} = ${it.value}" } + "\n"
 
     fun smsPrompt(sms: String, categories: List<String>, known: Map<String, String>): String = """
 Read one bank SMS and reply with only one JSON object.
@@ -139,8 +139,35 @@ JSON:""".trimIndent()
         return null
     }
 
-    fun fromSms(sms: String, categories: List<String>, known: Map<String, String>): Item? =
-        ask(smsPrompt(sms, categories, known))?.let { toItem(it, sms, categories) }
+    // ---------- safety check ----------
+    // The model does all the reading. These words only veto its answer, because small models
+    // can't reliably tell "money moved" from "money will move" or "money didn't move".
+    private val NOT_A_PAYMENT = listOf("otp", "one time password", "verification code", "failed", "declined", "unsuccessful",
+        "not processed", "could not be processed", "pre-approved", "preapproved", "apply now")
+    private val LATER = listOf("scheduled", "will be debited", "to be debited", "is due", "due on", "due date", "will be deducted")
+
+    /** Lower-case words joined by single spaces, so phrases match on word boundaries without patterns. */
+    private fun words(text: String): String =
+        " " + text.lowercase().map { if (it.isLetterOrDigit() || it == '-') it else ' ' }.joinToString("").split(' ').filter { it.isNotEmpty() }.joinToString(" ") + " "
+
+    /** Returns (forced type, reason) when the safety check overrides the model, else null. */
+    fun safetyCheck(text: String): Pair<String, String>? {
+        val w = words(text)
+        NOT_A_PAYMENT.firstOrNull { " $it " in w }?.let { return "ignore" to "Mentions \"$it\", so it isn't a completed payment" }
+        LATER.firstOrNull { " $it " in w }?.let { return "upcoming" to "Payment is only scheduled" }
+        return null
+    }
+
+    data class Verdict(val item: Item?, val reason: String?)
+
+    /** Reads one SMS. The safety check can turn a debit into "ignore" or "upcoming". */
+    fun fromSms(sms: String, categories: List<String>, known: Map<String, String>): Verdict {
+        val safety = safetyCheck(sms)
+        if (safety?.first == "ignore") return Verdict(Item("ignore", 0.0, "", null, "Other", true), safety.second)
+        val item = ask(smsPrompt(sms, categories, known))?.let { toItem(it, sms, categories) } ?: return Verdict(null, "The AI couldn't read this message")
+        if (safety?.first == "upcoming" && item.type != "ignore") return Verdict(item.copy(type = "upcoming"), safety.second)
+        return Verdict(item, null)
+    }
 
     @Suppress("UNCHECKED_CAST")
     fun fromNote(text: String, categories: List<String>, known: Map<String, String>, today: LocalDate): List<Item> {
@@ -148,8 +175,10 @@ JSON:""".trimIndent()
         return ((o["items"] as? List<Any?>) ?: emptyList()).mapNotNull { (it as? Map<String, Any?>)?.let { m -> toItem(m, text, categories, "debit") } }
     }
 
-    fun fromRow(header: String, row: String, categories: List<String>, known: Map<String, String>): Item? =
-        ask(rowPrompt(header, row, categories, known))?.let { toItem(it, row, categories) }
+    fun fromRow(header: String, row: String, categories: List<String>, known: Map<String, String>): Verdict {
+        val item = ask(rowPrompt(header, row, categories, known))?.let { toItem(it, row, categories) } ?: return Verdict(null, "The AI couldn't read this row")
+        return Verdict(item, null)
+    }
 
     fun plan(question: String, categories: List<String>, today: LocalDate): Map<String, Any?>? {
         val p = ask(questionPrompt(question, categories, today)) ?: return null

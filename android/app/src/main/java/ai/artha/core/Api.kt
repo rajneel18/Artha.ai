@@ -3,27 +3,12 @@ package ai.artha.core
 import java.time.LocalDate
 import java.util.Base64
 
-/** Optional AI features. Implemented with Claude on the phone; faked in tests. */
-interface Ai {
-    data class Expense(val amount: Double, val merchant: String, val category: String, val kind: String, val date: String,
-                       val splitWith: List<String>, val splitWays: Int, val confident: Boolean)
-    data class Receipt(val merchant: String, val total: Double, val date: String, val category: String,
-                       val items: List<String>, val confident: Boolean)
-
-    class Unavailable(message: String) : Exception(message)
-
-    fun available(): Boolean
-    fun parseExpenses(text: String, categories: List<String>, today: LocalDate): List<Expense>
-    fun scanReceipt(data: ByteArray, mediaType: String, categories: List<String>, today: LocalDate): Receipt
-    fun planQuery(question: String, categories: List<String>, today: LocalDate): Map<String, Any?>
-    fun monthlyInsights(statsJson: String): Map<String, Any?>
-}
-
 /**
  * The app's API, called by the UI through the WebView bridge and by the background SMS / notification capture.
  * Same routes and JSON shapes as the original web server, so the UI code barely changed.
  */
-class Api(val engine: Engine, val ai: Ai) {
+class Api(val engine: Engine, val model: LocalModel) {
+    val extractor = Extractor(model)
     private val db get() = engine.db
     private fun today() = engine.today()
 
@@ -36,13 +21,12 @@ class Api(val engine: Engine, val ai: Ai) {
         Response(200, route(method.uppercase(), path, query, parseBody(body)))
     } catch (e: ApiError) {
         Response(e.status, mapOf("detail" to e.message))
-    } catch (e: Ai.Unavailable) {
-        Response(503, mapOf("detail" to e.message))
+    } catch (e: ModelMissing) {
+        Response(409, mapOf("detail" to e.message))
     } catch (e: Exception) {
         Response(500, mapOf("detail" to (e.message ?: "Something went wrong")))
     }
 
-    private fun aiOn() = ai.available() && engine.settings()["ai_enabled"] == true
     private fun month(q: Map<String, String>) = q["month"]?.also {
         if (!Regex("\\d{4}-\\d{2}").matches(it)) throw ApiError(400, "month must be YYYY-MM")
     } ?: today().toString().take(7)
@@ -53,10 +37,21 @@ class Api(val engine: Engine, val ai: Ai) {
         val p = path.trim('/').removePrefix("api/").split("/")
         return when {
             // ---- capture ----
-            m == "POST" && p == listOf("ingest") -> ingestText(b.str("text") ?: "", null, b.bool("smart") == true)
-            m == "POST" && p == listOf("receipt") -> scanReceipt(b)
+            m == "POST" && p == listOf("ingest") -> ingest(b.str("text") ?: "", b.str("mode") ?: "note")
             m == "POST" && p == listOf("transactions") -> addTx(b)
-            m == "POST" && p == listOf("import", "csv") -> importCsv(b.str("text") ?: "")
+            m == "POST" && p == listOf("import", "text") -> importText(b.str("text") ?: "")
+
+            // ---- detected by the on-device AI, waiting for your OK ----
+            m == "GET" && p == listOf("detected") -> engine.detected()
+            m == "POST" && p == listOf("detected", "log-all") -> mapOf("logged" to engine.logAllDetected())
+            m == "POST" && p.size == 2 && p[0] == "detected" -> {
+                val id = id(p[1])
+                when (b.str("action")) {
+                    "log" -> { checkCategory(b.str("category")); engine.logDetected(id, b) }
+                    "skip" -> { engine.skipDetected(id); mapOf("ok" to true) }
+                    else -> throw ApiError(400, "Unknown action")
+                }
+            }
 
             // ---- ledger ----
             m == "GET" && p == listOf("transactions") -> listTx(q)
@@ -89,7 +84,7 @@ class Api(val engine: Engine, val ai: Ai) {
 
             // ---- budget & settings ----
             m == "GET" && p == listOf("categories") -> engine.allCategories()
-            m == "GET" && p == listOf("settings") -> engine.settings().apply { this["ai_available"] = ai.available() }
+            m == "GET" && p == listOf("settings") -> engine.settings().apply { this["model_ready"] = model.available() }
             m == "PUT" && p == listOf("settings") -> putSettings(b)
             m == "GET" && p == listOf("budget") -> engine.budgetStatus()
             m == "GET" && p == listOf("summary") -> summary(month(q))
@@ -114,9 +109,8 @@ class Api(val engine: Engine, val ai: Ai) {
             m == "POST" && p == listOf("ask") -> ask(b.str("question") ?: throw ApiError(400, "Ask a question"))
             m == "GET" && p == listOf("insights") -> month(q).let { mo ->
                 mapOf("month" to mo, "insights" to engine.ruleInsights(mo), "stats" to engine.monthStats(mo),
-                    "recommendations" to engine.recommendations(mo), "ai_ready" to aiOn())
+                    "recommendations" to engine.recommendations(mo))
             }
-            m == "POST" && p == listOf("insights", "ai") -> aiInsights(month(q))
             m == "GET" && p == listOf("recommendations") -> engine.recommendations(month(q))
 
             // ---- your data ----
@@ -143,63 +137,28 @@ class Api(val engine: Engine, val ai: Ai) {
         else t.lines().map { it.trim() }.filter { it.isNotEmpty() }
     }
 
-    private fun recordAi(e: Ai.Expense, source: String, cats: List<String>): Map<String, Any?>? {
-        val d = try { engine.clampDate(LocalDate.parse(e.date)) } catch (_: Exception) { today() }
-        return engine.record(d, kotlin.math.abs(e.amount), if (e.kind == "credit") "credit" else "debit", e.merchant.ifBlank { "Unknown" },
-            e.merchant, source, e.category.takeIf { it in cats }, splitWith = e.splitWith, splitWays = e.splitWays.takeIf { it > 1 },
-            confident = e.confident)
-    }
-
-    fun ingestText(text: String, sourceOverride: String?, smart: Boolean): Map<String, Any?> {
-        if (text.length > 50_000) throw ApiError(413, "Too much text at once")
-        val added = mutableListOf<Map<String, Any?>>(); val skipped = mutableListOf<String>(); val notes = mutableListOf<String>()
-        var ignored = 0; var duplicates = 0
-        val useAi = aiOn()
-        val cats = engine.allCategories()
-        if (smart && useAi) {
-            try {
-                ai.parseExpenses(Redact.apply(text), cats, today()).forEach { e -> recordAi(e, sourceOverride ?: "voice", cats)?.let { added += it } }
-                return mapOf("added" to added, "skipped" to skipped, "ignored" to 0, "duplicates" to 0, "notes" to notes)
-            } catch (e: Ai.Unavailable) { notes += e.message ?: "AI unavailable" }
+    /**
+     * Typed or spoken notes are read by the AI and logged right away (you wrote them, so no confirmation needed).
+     * A pasted bank SMS goes to the Detected list like any other SMS.
+     */
+    fun ingest(text: String, mode: String): Map<String, Any?> {
+        if (text.isBlank()) throw ApiError(400, "Type or say a payment first")
+        if (text.length > 5_000) throw ApiError(413, "That's too long. Use Import statement for big lists")
+        if (mode == "sms") {
+            val queued = engine.enqueue(text, "sms", java.time.LocalDateTime.now())
+            while (engine.analyzeNext(extractor)) {}
+            return mapOf("queued" to queued, "detected" to engine.detected())
         }
-        for (msg in splitMessages(text)) {
-            if (Parser.isNonTransaction(msg)) { ignored++; continue }
-            val p = Parser.parse(msg, today())
-            if (p == null) {
-                if (useAi) {
-                    try { ai.parseExpenses(Redact.apply(msg), cats, today()).forEach { e -> recordAi(e, sourceOverride ?: "text", cats)?.let { added += it } }; continue }
-                    catch (e: Ai.Unavailable) { notes += e.message ?: "AI unavailable" }
-                }
-                skipped += msg; continue
-            }
-            val r = engine.record(p.date, p.amount, p.kind, p.merchant, p.note, sourceOverride ?: p.source,
-                raw = if (p.source == "sms" || sourceOverride != null) msg else null, splitWith = p.splitWith, splitWays = p.splitWays, confident = p.confident)
-            if (r == null) duplicates++ else added += r
-        }
-        return mapOf("added" to added, "skipped" to skipped, "ignored" to ignored, "duplicates" to duplicates, "notes" to notes)
-    }
-
-    /** Background capture from a bank SMS or a payment-app notification. Strict, so personal messages are never logged. */
-    fun captureAutomatic(text: String, source: String): Map<String, Any?>? {
-        val one = text.split(Regex("\\s+")).joinToString(" ")
-        if (!Parser.looksLikePayment(one)) return null
-        val p = Parser.parse(one, today()) ?: return null
-        return engine.record(p.date, p.amount, p.kind, p.merchant, p.note, source, raw = one, confident = p.confident)
-    }
-
-    private fun scanReceipt(b: Map<String, Any?>): Map<String, Any?> {
-        val media = (b.str("mime") ?: "").lowercase().let { if (it == "image/jpg") "image/jpeg" else it }
-        if (media !in setOf("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf")) throw ApiError(400, "Use a JPG, PNG, WEBP photo or a PDF")
-        val data = Base64.getDecoder().decode(b.str("data") ?: throw ApiError(400, "No file"))
-        if (data.size > 10 * 1024 * 1024) throw ApiError(413, "File is larger than 10 MB")
-        if (!aiOn()) throw ApiError(400, "Turn on AI features in Settings to scan receipts")
         val cats = engine.allCategories()
-        val rc = ai.scanReceipt(data, media, cats, today())
-        val d = try { engine.clampDate(LocalDate.parse(rc.date)) } catch (_: Exception) { today() }
-        val note = rc.merchant + if (rc.items.isNotEmpty()) ": " + rc.items.take(8).joinToString(", ") else ""
-        val tx = engine.record(d, rc.total, "debit", rc.merchant.ifBlank { "Unknown" }, note, "receipt", rc.category.takeIf { it in cats }, confident = rc.confident)
-        return mapOf("transaction" to tx, "items" to rc.items)
+        val added = extractor.fromNote(text, cats, engine.learnedMap(), today()).filter { it.type in setOf("debit", "credit") }.mapNotNull { e ->
+            engine.record(engine.clampDate(e.date ?: today()), e.amount, e.type, e.party, text, "text",
+                e.category.takeIf { it != "Other" }, splitWith = e.splitWith, splitWays = e.splitWays, confident = e.confident)
+        }
+        return mapOf("added" to added)
     }
+
+    /** Background capture from a bank SMS: queue it for the AI. Returns true if it was new. */
+    fun captureSms(body: String, sender: String?, at: java.time.LocalDateTime): Boolean = engine.enqueue(body, "sms", at, sender)
 
     private fun addTx(b: Map<String, Any?>): Any? {
         val amount = b.dbl("amount") ?: 0.0
@@ -243,10 +202,10 @@ class Api(val engine: Engine, val ai: Ai) {
         b.strList("custom_categories")?.let { l -> clean["custom_categories"] = l.map { it.trim().take(30) }.filter { it.isNotEmpty() }.toSortedSet().take(30) }
         b.dbl("savings_goal_pct")?.let { clean["savings_goal_pct"] = it.toLong().coerceIn(0, 90) }
         b.str("budget_start")?.let { clean["budget_start"] = LocalDate.parse(it).toString() }
-        for (k in listOf("ai_enabled", "auto_capture_sms", "auto_capture_notifications", "notify_logged", "app_lock", "hide_in_recents"))
+        for (k in listOf("auto_capture_sms", "auto_log_confident", "notify_logged", "app_lock", "hide_in_recents"))
             b.bool(k)?.let { clean[k] = it }
         engine.ensureStarted()
-        return engine.setSettings(clean).apply { this["ai_available"] = ai.available() }
+        return engine.setSettings(clean).apply { this["model_ready"] = model.available() }
     }
 
     private fun summary(month: String): Map<String, Any?> {
@@ -304,19 +263,10 @@ class Api(val engine: Engine, val ai: Ai) {
         val q = question.trim().take(500)
         var usedAi = false
         var plan: Map<String, Any?>? = null
-        if (aiOn()) try { plan = ai.planQuery(q, engine.allCategories(), today()); usedAi = true } catch (_: Ai.Unavailable) {}
+        if (model.available()) try { plan = extractor.plan(q, engine.allCategories(), today()); usedAi = plan != null } catch (_: Exception) {}
         val pl = plan ?: engine.localPlan(q)
         val r = engine.runPlan(pl)
         return mapOf("answer" to engine.describe(pl, r), "plan" to pl, "used_ai" to usedAi) + r
-    }
-
-    private fun aiInsights(month: String): Map<String, Any?> {
-        if (!aiOn()) throw ApiError(400, "Turn on AI features in Settings first")
-        val payload = mapOf( // aggregated numbers only - no individual transactions or notes
-            "month" to engine.monthStats(month), "previous_month" to engine.monthStats(engine.prevMonth(month)),
-            "daily_budget" to engine.budgetStatus(), "subscriptions_monthly" to engine.subscriptions()["monthly_total"],
-            "suggested_budgets" to engine.recommendations(month))
-        return ai.monthlyInsights(toJson(payload).toString())
     }
 
     // ---------------- CSV ----------------
@@ -335,39 +285,24 @@ class Api(val engine: Engine, val ai: Ai) {
         out += cur.toString(); return out
     }
 
-    private fun importCsv(text: String): Map<String, Any?> {
+    /**
+     * Imports a statement or any list of transactions (CSV or plain text). Nothing is parsed by hand:
+     * each row is queued for the on-device AI, which reads it and suggests a category. Results show up
+     * in the Detected list where you can log them one by one or all at once.
+     */
+    private fun importText(text: String): Map<String, Any?> {
         if (text.length > 10 * 1024 * 1024) throw ApiError(413, "File is larger than 10 MB")
-        val lines = text.removePrefix("﻿").lines().filter { it.isNotBlank() }
+        val lines = text.removePrefix("\uFEFF").lines().map { it.trim() }.filter { it.isNotEmpty() }
         if (lines.isEmpty()) throw ApiError(400, "Empty file")
-        val header = csvRow(lines[0]).map { it.trim().lowercase() }
-        fun pick(vararg names: String): Int? { for (n in names) header.indexOfFirst { n in it }.takeIf { it >= 0 }?.let { return it }; return null }
-        val cDate = pick("date"); val cDesc = pick("narration", "description", "particular", "remark", "details", "merchant")
-        val cAmt = pick("amount"); val cDr = pick("debit", "withdrawal"); val cCr = pick("credit", "deposit")
-        if (cDate == null || (cAmt == null && cDr == null)) throw ApiError(400, "Could not find date/amount columns in $header")
-        val fmts = listOf("yyyy-MM-dd", "dd/MM/yyyy", "dd-MM-yyyy", "dd/MM/yy", "dd-MM-yy", "dd-MMM-yyyy", "dd MMM yyyy").map {
-            java.time.format.DateTimeFormatterBuilder().parseCaseInsensitive().appendPattern(it).toFormatter(java.util.Locale.ENGLISH)
+        val now = java.time.LocalDateTime.now()
+        // A CSV-style file: first line is the header, the AI sees it with every row.
+        val tabular = lines.size > 1 && lines.take(5).all { it.count { c -> c == ',' || c == '\t' || c == ';' } >= 2 }
+        var queued = 0
+        if (tabular) for (row in lines.drop(1)) { if (engine.enqueue(row, "import", now, header = lines[0])) queued++ }
+        else for (block in text.split("\n\n").map { it.trim() }.filter { it.isNotEmpty() }.flatMap { b -> if (b.lines().size > 3) b.lines() else listOf(b) }) {
+            if (engine.enqueue(block.trim(), "import", now, header = "")) queued++
         }
-        fun whenOf(v: String?): LocalDate? { val s = v?.trim() ?: return null; for (f in fmts) try { return LocalDate.parse(s, f) } catch (_: Exception) {}; return null }
-        fun num(v: String?) = v?.replace(",", "")?.trim()?.toDoubleOrNull() ?: 0.0
-        var added = 0; var skipped = 0
-        for (line in lines.drop(1)) {
-            val r = csvRow(line)
-            val d = whenOf(r.getOrNull(cDate))
-            val desc = cDesc?.let { r.getOrNull(it)?.trim() } ?: ""
-            val (amount, kind) = if (cDr != null || cCr != null) {
-                val dr = cDr?.let { num(r.getOrNull(it)) } ?: 0.0; val cr = cCr?.let { num(r.getOrNull(it)) } ?: 0.0
-                if (dr != 0.0) dr to "debit" else cr to "credit"
-            } else kotlin.math.abs(num(r.getOrNull(cAmt!!))) to "debit"
-            if (d == null || amount == 0.0) { skipped++; continue }
-            if (engine.record(d, amount, kind, merchantFromNarration(desc), desc, "csv", raw = "csv|$d|$amount|$desc") != null) added++ else skipped++
-        }
-        return mapOf("added" to added, "skipped" to skipped)
-    }
-
-    private fun merchantFromNarration(desc: String): String {
-        val skip = setOf("UPI", "POS", "NEFT", "IMPS", "ACH", "ECOM", "PUR", "TXN", "DR", "CR")
-        val parts = desc.split(Regex("[-/*]")).map { it.trim() }.filter { it.isNotEmpty() && !Regex("\\d{3,}|@").containsMatchIn(it) && it.uppercase() !in skip }
-        return parts.firstOrNull()?.let { Parser.titleCase(it).take(40) } ?: desc.take(40).ifBlank { "Unknown" }
+        return mapOf("queued" to queued, "pending" to engine.pendingCount())
     }
 
     private fun exportCsv(): String {

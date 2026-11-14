@@ -4,7 +4,6 @@ import ai.artha.core.toJson
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.ClipboardManager
-import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
@@ -12,6 +11,12 @@ import android.net.Uri
 import android.os.Bundle
 import android.provider.MediaStore
 import android.provider.Settings
+import android.provider.Telephony
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import java.time.Instant
+import java.time.LocalDateTime
+import java.time.ZoneId
 import android.speech.RecognizerIntent
 import android.view.View
 import android.view.WindowManager
@@ -75,6 +80,19 @@ class MainActivity : AppCompatActivity() {
         if (uri != null) io.execute {
             contentResolver.openOutputStream(uri)?.use { it.write(content.toByteArray()) }
             runOnUiThread { js("window.__arthaToast && __arthaToast('Saved')") }
+        }
+    }
+    private val pickModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        io.execute {
+            try {
+                val target = QwenModel.file(this).apply { parentFile?.mkdirs() }
+                val tmp = java.io.File(target.path + ".import")
+                contentResolver.openInputStream(uri)!!.use { inp -> tmp.outputStream().use { inp.copyTo(it, 1 shl 16) } }
+                tmp.renameTo(target)
+                AnalyzeWorker.start(this)
+                js("window.__arthaToast && __arthaToast('AI model ready'); window.__arthaRefresh && __arthaRefresh()")
+            } catch (e: Exception) { js("window.__arthaToast && __arthaToast('Could not import that file')") }
         }
     }
     private val askPerms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { js("window.__arthaRefresh && __arthaRefresh()") }
@@ -184,8 +202,29 @@ class MainActivity : AppCompatActivity() {
 
     private fun js(code: String) = runOnUiThread { if (::web.isInitialized) web.evaluateJavascript(code, null) }
 
-    private fun hasNotificationAccess(): Boolean =
-        Settings.Secure.getString(contentResolver, "enabled_notification_listeners")?.contains(ComponentName(this, PaymentListener::class.java).flattenToString()) == true
+    private fun granted(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+
+    private fun downloadPct(): Int? = try {
+        WorkManager.getInstance(this).getWorkInfosForUniqueWork(ModelDownloadWorker.NAME).get()
+            .firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }?.progress?.getInt("pct", 0)
+    } catch (_: Exception) { null }
+
+    /** Queues bank SMS from the last [months] months for the AI. Only messages from bank-style senders that mention money. */
+    private fun importInbox(months: Int): Int {
+        val since = LocalDateTime.now().minusMonths(months.toLong()).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        var n = 0
+        contentResolver.query(Telephony.Sms.Inbox.CONTENT_URI, arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
+            "${Telephony.Sms.DATE} >= ?", arrayOf(since.toString()), "${Telephony.Sms.DATE} ASC")?.use { c ->
+            while (c.moveToNext()) {
+                val sender = c.getString(0) ?: continue; val body = c.getString(1) ?: continue
+                val low = body.lowercase()
+                if (!isBankSender(sender) || !(low.contains("rs") || low.contains("inr") || low.contains("₹"))) continue
+                val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(c.getLong(2)), ZoneId.systemDefault())
+                if (app.api.captureSms(body, sender, at)) n++
+            }
+        }
+        return n
+    }
 
     /** Everything the UI can ask of the phone. Exposed to the bundled page only. */
     inner class Bridge {
@@ -201,21 +240,36 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun status(): String = toJson(mapOf(
-            "sms" to (checkSelfPermission(Manifest.permission.RECEIVE_SMS) == PackageManager.PERMISSION_GRANTED),
-            "notification_access" to hasNotificationAccess(),
-            "post_notifications" to (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED),
-            "ai_key_set" to !app.secrets.getString("claude_api_key", null).isNullOrBlank(),
+            "sms" to granted(Manifest.permission.RECEIVE_SMS),
+            "read_sms" to granted(Manifest.permission.READ_SMS),
+            "post_notifications" to granted(Manifest.permission.POST_NOTIFICATIONS),
+            "model_ready" to app.model.available(),
+            "model_download_pct" to downloadPct(),
+            "model_size_gb" to QwenModel.SIZE_BYTES / 1e9,
+            "pending" to app.api.engine.pendingCount(),
             "can_lock" to canLock(),
             "version" to packageManager.getPackageInfo(packageName, 0).versionName,
         )).toString()
 
         @JavascriptInterface fun requestSms() = askPerms.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.POST_NOTIFICATIONS))
         @JavascriptInterface fun requestNotifications() = askPerms.launch(arrayOf(Manifest.permission.POST_NOTIFICATIONS))
-        @JavascriptInterface fun openNotificationAccess() = startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
         @JavascriptInterface fun openAppInfo() = startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
+        @JavascriptInterface fun openUrl(url: String) { if (url.startsWith("https://")) startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
 
-        @JavascriptInterface fun setApiKey(key: String) { app.secrets.edit().putString("claude_api_key", key.trim()).apply() }
-        @JavascriptInterface fun clearApiKey() { app.secrets.edit().remove("claude_api_key").apply() }
+        @JavascriptInterface fun downloadModel() = ModelDownloadWorker.start(this@MainActivity)
+        @JavascriptInterface fun importModel() = runOnUiThread { pickModel.launch(arrayOf("*/*")) }
+        @JavascriptInterface fun deleteModel() { app.model.release(); QwenModel.file(this@MainActivity).delete() }
+        @JavascriptInterface fun analyze() = AnalyzeWorker.start(this@MainActivity)
+
+        @JavascriptInterface
+        fun importSms(months: Int) {
+            if (!granted(Manifest.permission.READ_SMS)) { askPerms.launch(arrayOf(Manifest.permission.READ_SMS)); return }
+            io.execute {
+                val n = importInbox(months.coerceIn(1, 24))
+                AnalyzeWorker.start(this@MainActivity)
+                js("window.__arthaToast && __arthaToast(${JSONObject.quote(if (n == 0) "No new bank messages found" else "Found $n bank messages. Reading them now")}); window.__arthaRefresh && __arthaRefresh()")
+            }
+        }
 
         @JavascriptInterface fun clipboard(): String =
             (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this@MainActivity)?.toString() ?: ""
