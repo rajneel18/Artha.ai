@@ -7,6 +7,11 @@ import java.time.LocalDate
 interface LocalModel {
     fun available(): Boolean
     fun generate(prompt: String): String
+    /**
+     * Same as generate(prefix + suffix), but lets the model keep the work it did on [prefix] (the long,
+     * unchanging instructions) and reuse it for the next message. Big speed-up for imports.
+     */
+    fun generate(prefix: String, suffix: String): String = generate(prefix + suffix)
 }
 
 class ModelMissing : Exception("Set up the on-device AI model in Settings first")
@@ -30,6 +35,7 @@ class Extractor(private val model: LocalModel) {
     )
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val SPLIT = "<<message>>"
 
     // ---------- prompts ----------
     private fun categoryLine(categories: List<String>) = "Categories: " + categories.joinToString(", ")
@@ -56,8 +62,16 @@ SMS: UPI AutoPay mandate for Spotify debit of Rs.119.00 is scheduled on 05-12-20
 JSON: {"type": "upcoming", "amount": 119, "party": "Spotify", "category": "Entertainment"}
 SMS: Congratulations! You are eligible for a credit card with limit Rs.2,00,000. Apply now - HDFC Bank
 JSON: {"type": "ignore", "amount": 0, "party": "", "category": "Other"}
+$SPLIT
 SMS: $sms
 JSON:""".trimIndent()
+
+    /** The SMS prompt cut into the part shared by every message and the part that changes. */
+    fun smsPromptParts(sms: String, categories: List<String>, known: Map<String, String>): Pair<String, String> {
+        val full = smsPrompt(sms, categories, known)
+        val i = full.indexOf(SPLIT)
+        return full.substring(0, i) to full.substring(i + SPLIT.length).trimStart('\n')
+    }
 
     fun notePrompt(text: String, categories: List<String>, known: Map<String, String>, today: LocalDate): String = """
 You turn a person's typed or spoken note about money into JSON for an Indian expense tracker. Today is $today.
@@ -132,6 +146,12 @@ JSON:""".trimIndent()
         return Item(type, amount, party, date, cat, confident, split, ways)
     }
 
+    private fun askSplit(prefix: String, suffix: String): Map<String, Any?>? {
+        if (!model.available()) throw ModelMissing()
+        repeat(2) { model.generate(prefix, suffix).let { r -> parseObject(r)?.let { return it } } }
+        return null
+    }
+
     private fun ask(prompt: String): Map<String, Any?>? {
         if (!model.available()) throw ModelMissing()
         // One retry: small models occasionally produce malformed JSON.
@@ -161,10 +181,39 @@ JSON:""".trimIndent()
     data class Verdict(val item: Item?, val reason: String?)
 
     /** Reads one SMS. The safety check can turn a debit into "ignore" or "upcoming". */
+    /**
+     * Banks sign every SMS ("... - Saraswat Co-op Bank Ltd."). Small models tend to report that signature as
+     * the payee, so it's cut off before the model reads the message.
+     */
+    fun withoutSignature(sms: String): String {
+        val cut = sms.lastIndexOf(" - ")
+        if (cut < 0) return sms
+        val tail = sms.substring(cut + 3)
+        return if (tail.length <= 60 && tail.lowercase().contains("bank")) sms.substring(0, cut).trim() else sms
+    }
+
+    /** "shravani.shinde109-1@okicici" -> "Shravani Shinde": the name part of a UPI ID, by plain text cutting. */
+    fun nameFromUpiId(sms: String): String? {
+        val token = sms.split(' ', '(', ')', ',', ';').firstOrNull { '@' in it && it.indexOf('@') > 1 } ?: return null
+        val name = token.substringBefore('@').map { if (it.isLetter()) it else ' ' }.joinToString("").trim()
+            .split(' ').filter { it.length > 1 }.joinToString(" ")
+        return name.takeIf { it.length >= 3 }?.let { titleCase(it) }
+    }
+
+    private fun isBankName(party: String) = party.lowercase().let { "bank" in it || " co-op" in it || "ltd" in it }
+
     fun fromSms(sms: String, categories: List<String>, known: Map<String, String>): Verdict {
         val safety = safetyCheck(sms)
         if (safety?.first == "ignore") return Verdict(Item("ignore", 0.0, "", null, "Other", true), safety.second)
-        val item = ask(smsPrompt(sms, categories, known))?.let { toItem(it, sms, categories) } ?: return Verdict(null, "The AI couldn't read this message")
+        val clean = withoutSignature(sms)
+        val (prefix, suffix) = smsPromptParts(clean, categories, known)
+        var item = askSplit(prefix, suffix)?.let { toItem(it, clean, categories) } ?: return Verdict(null, "The AI couldn't read this message")
+        // A bank name, nothing, or a raw ID like "shravani.shinde109-1" isn't a payee: use the name inside the UPI ID instead.
+        val looksLikeId = item.party.any { it.isDigit() || it == '@' || it == '_' } || (item.party.contains('.') && !item.party.contains(' '))
+        if (item.type != "ignore" && (isBankName(item.party) || item.party == "Unknown" || looksLikeId)) {
+            val fromId = nameFromUpiId(clean)
+            item = if (fromId != null) item.copy(party = fromId) else item.copy(confident = false)
+        }
         if (safety?.first == "upcoming" && item.type != "ignore") return Verdict(item.copy(type = "upcoming"), safety.second)
         return Verdict(item, null)
     }

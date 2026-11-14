@@ -58,6 +58,8 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
                 if (left > 3) setForeground(progressInfo("Reading bank messages… $left left", done, (done + left).toInt()))
                 if (!engine.analyzeNext(app.api.extractor)) break
                 done++
+                // Short breather between messages so the phone stays smooth during big imports.
+                if (left > 3) kotlinx.coroutines.delay(150)
             }
         } finally { app.model.release() }
         // Ask about new live SMS payments right away; imported history is reviewed in the app instead.

@@ -43,9 +43,10 @@ class JdbcDb : Db {
 class FakeModel(var ready: Boolean = true) : LocalModel {
     val answers = mutableMapOf<String, String>()
     var calls = 0
+    var lastPrompt = ""
     override fun available() = ready
     override fun generate(prompt: String): String {
-        calls++
+        calls++; lastPrompt = prompt
         val tail = prompt.substringAfterLast("\nSMS: ").substringAfterLast("\nNote: ").substringAfterLast("\nRow: ").substringAfterLast("\nQuestion: ")
         return answers.entries.firstOrNull { it.key in tail }?.value ?: """{"type": "ignore", "amount": 0, "party": "", "category": "Other"}"""
     }
@@ -93,6 +94,16 @@ class EngineTest {
         val tx = txs().single()
         assertEquals("Shravani Shinde", tx["merchant"]); assertEquals("2026-11-14", tx["date"]); assertEquals("Transfers", tx["category"])
         assertFalse("balance is not stored", (tx["note"] as String).contains("84413"))
+    }
+
+    @Test fun bankNameOrRawIdIsNeverThePayee() {
+        model.answers["shravani"] = """{"type": "debit", "amount": 1.0, "party": "Saraswat Co-op Bank Ltd.", "category": "Transfers"}"""
+        receive(SARASWAT_DEBIT)
+        assertEquals("Shravani Shinde", items().single()["party"])
+        assertFalse("the bank signature never reaches the model", model.lastPrompt.contains("Saraswat Co-op Bank Ltd"))
+        model.answers["meera"] = """{"type": "debit", "amount": 75, "party": "meera.k12", "category": "Transfers"}"""
+        receive("Your a/c XX6196 is debited for Rs.75.00 on 13-11-2026 and credited to vpa meera.kulkarni12@okaxis - Saraswat Co-op Bank Ltd.")
+        assertEquals("Meera Kulkarni", items().first { it["amount"] == 75.0 }["party"])
     }
 
     @Test fun safetyCheckOverridesTheModel() {

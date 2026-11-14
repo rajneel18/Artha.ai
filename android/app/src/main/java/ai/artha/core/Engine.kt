@@ -53,6 +53,12 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
                 tx_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE, person TEXT NOT NULL,
                 amount REAL NOT NULL, settled INTEGER NOT NULL DEFAULT 0, settled_at TEXT)""",
         ).forEach { db.exec(it) }
+        val version = (db.scalar("PRAGMA user_version") as? Number)?.toInt() ?: 0
+        if (version < 2) {
+            // v2.2: earlier versions sometimes named the bank as the payee. Re-read those once (only ones not logged yet).
+            db.exec("UPDATE detected SET status='pending' WHERE status='analyzed' AND (lower(party) LIKE '%bank%' OR lower(party) LIKE '%co-op%')")
+            db.exec("PRAGMA user_version = 2")
+        }
     }
 
     // ---------------- settings & budget ----------------
@@ -609,7 +615,8 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
 
     /** Runs the AI on the next queued item. Returns false when the queue is empty. */
     fun analyzeNext(ex: Extractor): Boolean {
-        val r = db.one("SELECT * FROM detected WHERE status='pending' ORDER BY id LIMIT 1") ?: return false
+        // New SMS first, then history newest-first, so recent payments show up quickly.
+        val r = db.one("SELECT * FROM detected WHERE status='pending' ORDER BY (source='sms') DESC, received_at DESC, id DESC LIMIT 1") ?: return false
         val id = r.l("id")!!
         val cats = allCategories(); val known = learnedMap()
         val v = try {
