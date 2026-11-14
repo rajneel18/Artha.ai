@@ -3,253 +3,698 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f7f9">
 <meta name="mobile-web-app-capable" content="yes">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
 <title>Artha</title>
+<script>
+  // Apply the saved theme before first paint to avoid a flash.
+  try { const t = localStorage.getItem("artha_theme"); if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; } catch {}
+</script>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --accent-text:#fff; --chip:#eef2ff; --chip-text:#3730a3; --green:#15803d; --red:#dc2626; }
-  @media (prefers-color-scheme: dark) {
-    :root { --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#3b82f6; --accent-text:#fff; --chip:#1e2540; --chip-text:#c7d2fe; --green:#4ade80; --red:#f87171; }
+  :root {
+    --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --accent-text:#fff;
+    --chip:#eef2ff; --chip-text:#3730a3; --green:#15803d; --red:#dc2626; --amber:#b45309; --amber-bg:#fef3c7; --track:#e5e7eb;
+    --sheet-shadow: 0 -8px 32px rgba(0,0,0,.18);
   }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#3b82f6; --accent-text:#fff;
+      --chip:#1e2540; --chip-text:#c7d2fe; --green:#4ade80; --red:#f87171; --amber:#fbbf24; --amber-bg:#3a2d0c; --track:#2a2e36;
+      --sheet-shadow: 0 -8px 32px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#3b82f6; --accent-text:#fff;
+    --chip:#1e2540; --chip-text:#c7d2fe; --green:#4ade80; --red:#f87171; --amber:#fbbf24; --amber-bg:#3a2d0c; --track:#2a2e36;
+    --sheet-shadow: 0 -8px 32px rgba(0,0,0,.6);
+  }
+  [hidden] { display: none !important; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { background: var(--bg); }
   body { margin:0; font: 16px/1.4 Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text);
-         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
-         overscroll-behavior-y: contain; }
-  main { max-width: 640px; margin: 0 auto; padding: 0 16px 96px; }
+         padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); overscroll-behavior-y: contain; }
+  main { max-width: 640px; margin: 0 auto; padding: 0 16px calc(96px + env(safe-area-inset-bottom)); }
   header { position: sticky; top: 0; z-index: 5; background: var(--bg); display:flex; align-items:center; justify-content:space-between; gap:8px; padding: 10px 0; }
   h1 { font-size: 20px; margin: 0; font-weight: 700; }
+  h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .monthnav { display:flex; align-items:center; gap:2px; }
-  .monthnav span { min-width: 92px; text-align:center; font-weight:600; font-size:15px; }
+  .monthnav span { min-width: 88px; text-align:center; font-weight:600; font-size:15px; }
   .icon-btn { width:44px; height:44px; border:none; border-radius:22px; background:transparent; color:var(--text); font-size:22px; cursor:pointer; }
-  .icon-btn:active { background: var(--line); }
+  .icon-btn:disabled { opacity:.3; }
   .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin:12px 0; }
-  .stats { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; padding: 14px 12px; }
-  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
-  .stat .l { color:var(--muted); font-size: 13px; }
-  h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; }
-  textarea { width:100%; min-height:72px; font: inherit; font-size:16px; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--text); resize: vertical; }
-  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-  .actions { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:10px; }
+  .hero { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+  .big { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .label { color:var(--muted); font-size: 13px; }
+  .meter { height:10px; background:var(--track); border-radius:5px; overflow:hidden; margin-top:8px; grid-column: 1 / -1; }
+  .meter > div { height:100%; background:var(--green); border-radius:5px; transition: width .3s; }
+  .meter.over > div { background: var(--red); }
+  textarea, input[type=text], input[type=number], input[type=date], input[type=password], select.field {
+    width:100%; font: inherit; font-size:16px; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  textarea { min-height:64px; resize: vertical; }
+  textarea:focus, input:focus, select.field:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .grid4 { display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin-top:10px; }
   .btn { min-height:48px; font: inherit; font-weight:600; border-radius:12px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; padding: 0 12px; }
+  .btn.small { min-height:36px; font-size:14px; padding: 0 12px; border-radius: 18px; }
   .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-text); }
+  .btn.danger { color: var(--red); }
   .btn:active { filter: brightness(0.92); }
-  .links { display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:14px; }
-  .links a, .links label { color: var(--accent); text-decoration:none; cursor:pointer; min-height:32px; display:inline-flex; align-items:center; }
+  .btn.recording { background: var(--red); color:#fff; border-color: var(--red); }
+  .tool { display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; font-size:12px; font-weight:500; min-height:60px; }
+  .tool b { font-size:20px; font-weight:400; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px; }
   .bar { display:grid; grid-template-columns: 112px 1fr 76px; gap:8px; align-items:center; margin:10px 0; font-size:14px; }
   .bar .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .track { background:var(--line); border-radius:4px; height:10px; overflow:hidden; }
+  .track { background:var(--track); border-radius:4px; height:10px; overflow:hidden; }
   .fill { background:var(--accent); height:100%; border-radius:4px; }
-  .bar .amt { text-align:right; font-variant-numeric: tabular-nums; }
+  .num { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
   .day { display:flex; justify-content:space-between; color:var(--muted); font-size:13px; font-weight:600; padding: 14px 2px 4px; border-bottom: 1px solid var(--line); }
-  .tx { display:grid; grid-template-columns: 1fr auto 44px; align-items:center; gap:4px; padding: 8px 0 8px 2px; border-bottom: 1px solid var(--line); }
+  .tx { display:grid; grid-template-columns: 1fr auto; align-items:center; gap:8px; padding: 10px 2px; border-bottom: 1px solid var(--line); cursor:pointer; min-height:56px; }
   .tx .m { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .chip { position:relative; display:inline-flex; align-items:center; margin-top:4px; padding: 4px 10px; min-height:32px; border-radius:16px; background:var(--chip); color:var(--chip-text); font-size:13px; font-weight:500; }
-  .chip select { position:absolute; inset:0; opacity:0; width:100%; height:100%; font-size:16px; cursor:pointer; }
-  .tx .a { font-weight:600; font-variant-numeric: tabular-nums; white-space:nowrap; padding-left:8px; }
+  .tx .sub { font-size:13px; color:var(--muted); display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:2px; }
+  .chip { display:inline-flex; align-items:center; padding: 2px 10px; min-height:24px; border-radius:12px; background:var(--chip); color:var(--chip-text); font-size:12px; font-weight:500; }
+  .chip.warn { background: var(--amber-bg); color: var(--amber); }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
+  .chips button { min-height:40px; padding: 0 14px; border-radius:20px; border:1px solid var(--line); background:var(--card); color:var(--text); font: inherit; font-size:14px; cursor:pointer; }
+  .chips button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .amt { font-weight:600; font-variant-numeric: tabular-nums; white-space:nowrap; text-align:right; }
   .credit { color: var(--green); }
-  .del { width:44px; height:44px; border:none; background:none; color:var(--muted); font-size:18px; cursor:pointer; border-radius:22px; }
-  .hint { color:var(--muted); font-size:14px; }
-  .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(150%);
+  .hint { color:var(--muted); font-size:14px; margin: 6px 0 0; }
+  .review { border-left: 4px solid var(--amber); }
+  .q { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .q:last-child { border-bottom: none; padding-bottom: 0; }
+  .q .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  ul.plain { margin: 0; padding-left: 18px; } ul.plain li { margin: 6px 0; }
+  .list-item { display:flex; justify-content:space-between; align-items:center; gap:8px; padding: 10px 0; border-bottom: 1px solid var(--line); min-height:52px; }
+  .list-item:last-child { border-bottom:none; }
+  .seg { display:grid; grid-template-columns: repeat(3,1fr); background: var(--bg); border:1px solid var(--line); border-radius:12px; padding:3px; }
+  .seg button { min-height:40px; border:none; border-radius:9px; background:transparent; color:var(--text); font: inherit; font-size:14px; cursor:pointer; }
+  .seg button.on { background: var(--card); box-shadow: 0 1px 3px rgba(0,0,0,.15); font-weight:600; }
+  .switch { display:flex; justify-content:space-between; align-items:center; gap:12px; min-height:48px; }
+  .switch input { width:48px; height:28px; accent-color: var(--accent); }
+  .minichart { display:flex; align-items:flex-end; gap:4px; height:72px; margin-top:10px; }
+  .minichart div { flex:1; background: var(--accent); border-radius:3px 3px 0 0; min-height:2px; }
+  .minichart div.zero { background: var(--track); }
+  .axis { display:flex; justify-content:space-between; font-size:11px; color: var(--muted); margin-top:4px; }
+  nav.tabs { position: fixed; bottom: 0; left: 0; right: 0; z-index: 8; background: var(--card); border-top: 1px solid var(--line);
+             display:grid; grid-template-columns: repeat(4, 1fr); padding-bottom: env(safe-area-inset-bottom); }
+  nav.tabs button { min-height:64px; border:none; background:none; color:var(--muted); font: inherit; font-size:12px; font-weight:500; cursor:pointer; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; position:relative; }
+  nav.tabs button b { font-size:20px; font-weight:400; line-height:1; }
+  nav.tabs button.on { color: var(--accent); }
+  nav.tabs .badge { position:absolute; top:8px; left:calc(50% + 6px); background: var(--red); color:#fff; font-size:11px; min-width:18px; height:18px; border-radius:9px; padding: 0 5px; display:none; align-items:center; justify-content:center; }
+  .view { display:none; } .view.on { display:block; }
+  .sheet-bg { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 20; display:none; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 21; background: var(--card); border-radius: 20px 20px 0 0; box-shadow: var(--sheet-shadow);
+           max-height: 88vh; overflow-y: auto; padding: 8px 16px calc(20px + env(safe-area-inset-bottom)); transform: translateY(100%); transition: transform .22s ease; visibility:hidden; max-width: 640px; margin: 0 auto; }
+  .sheet.show { transform: translateY(0); visibility: visible; }
+  .grab { width:40px; height:4px; background: var(--line); border-radius:2px; margin: 4px auto 12px; }
+  .toast { position: fixed; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(30px); opacity:0; visibility:hidden;
            width: min(calc(100% - 32px), 600px); background:#1f2937; color:#fff; border-radius:12px; padding: 12px 8px 12px 16px;
-           display:flex; align-items:center; gap:8px; transition: transform .2s ease, visibility .2s; visibility: hidden; z-index: 10; font-size:15px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
-  .toast.show { transform: translateX(-50%) translateY(0); visibility: visible; }
+           display:flex; align-items:center; gap:8px; transition: all .2s ease; z-index: 30; font-size:15px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity:1; visibility: visible; }
   .toast span { flex:1; }
   .toast button { background:none; border:none; color:#93c5fd; font: inherit; font-weight:700; min-height:40px; padding:0 12px; cursor:pointer; }
-  #install { display:none; }
+  .answer { font-weight:600; margin: 12px 0 4px; }
+  a { color: var(--accent); }
+  code { font-size: 13px; background: var(--bg); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Artha</h1>
-    <div class="monthnav">
+    <h1 id="title">Artha</h1>
+    <div class="monthnav" id="monthnav" hidden>
       <button class="icon-btn" id="prev" aria-label="Previous month">‹</button>
       <span id="monthLabel"></span>
       <button class="icon-btn" id="next" aria-label="Next month">›</button>
     </div>
   </header>
 
-  <section class="card stats">
-    <div class="stat"><div class="l">Today</div><div class="v" id="s-today">₹0</div></div>
-    <div class="stat"><div class="l">Month</div><div class="v" id="s-spent">₹0</div></div>
-    <div class="stat"><div class="l">Received</div><div class="v credit" id="s-recv">₹0</div></div>
-  </section>
-
-  <section class="card">
-    <h2>Add spending</h2>
-    <textarea id="input" enterkeyhint="done" autocomplete="off" placeholder="250 swiggy dinner&#10;petrol 1500 yesterday&#10;…or paste a bank SMS"></textarea>
-    <div class="actions">
-      <button class="btn" id="paste">Paste SMS</button>
-      <button class="btn primary" id="add">Add</button>
+  <!-- HOME -->
+  <section class="view on" id="v-home">
+    <div class="card hero">
+      <div><div class="label">Left today</div><div class="big" id="leftToday">₹0</div><div class="label" id="ofAllowance"></div></div>
+      <div><div class="label">Savings Pool</div><div class="big credit" id="pool">₹0</div><div class="label" id="poolSub"></div></div>
+      <div class="meter" id="meter"><div style="width:0"></div></div>
     </div>
-    <div class="links">
-      <label>Import bank CSV<input type="file" id="csv" accept=".csv,text/csv" hidden></label>
-      <a href="#" id="export">Export CSV</a>
-      <a href="#" id="install">Install app</a>
+
+    <div class="card review" id="reviewCard" hidden>
+      <h2><span>Needs your input</span><span class="chip warn" id="reviewCount"></span></h2>
+      <div id="reviewList"></div>
+    </div>
+
+    <div class="card">
+      <h2>Add spending</h2>
+      <textarea id="input" enterkeyhint="done" autocomplete="off" placeholder="250 swiggy&#10;900 dinner split with Rahul and Priya&#10;…or paste a bank SMS"></textarea>
+      <div class="grid4">
+        <button class="btn tool" id="voice"><b>🎤</b>Speak</button>
+        <button class="btn tool" id="scan"><b>📷</b>Receipt</button>
+        <button class="btn tool" id="paste"><b>📋</b>Paste</button>
+        <button class="btn tool primary" id="add"><b>＋</b>Add</button>
+      </div>
+      <input type="file" id="receiptFile" accept="image/*,application/pdf" hidden>
+      <p class="hint" id="autoHint">Bank SMS can be logged automatically. See Settings → Automation.</p>
+    </div>
+
+    <div class="card">
+      <h2><span>Recent</span><button class="btn small" data-goto="activity">See all</button></h2>
+      <div id="recent"></div>
     </div>
   </section>
 
-  <section class="card">
-    <h2>By category</h2>
-    <div id="cats"></div>
+  <!-- ACTIVITY -->
+  <section class="view" id="v-activity">
+    <div class="card">
+      <form id="askForm" class="grid2" style="grid-template-columns: 1fr auto;">
+        <input type="text" id="ask" placeholder="Ask: food last month? uber over 300?" enterkeyhint="search" autocomplete="off">
+        <button class="btn primary" type="submit">Ask</button>
+      </form>
+      <div id="askResult"></div>
+    </div>
+    <div class="card">
+      <h2><span>Transactions</span><span class="label" id="txTotal"></span></h2>
+      <div id="tx"></div>
+    </div>
   </section>
 
-  <section class="card">
-    <h2>Transactions</h2>
-    <div id="tx"></div>
+  <!-- INSIGHTS -->
+  <section class="view" id="v-insights">
+    <div class="card hero">
+      <div><div class="label">Spent</div><div class="big" id="i-spent">₹0</div></div>
+      <div><div class="label">Received</div><div class="big credit" id="i-recv">₹0</div></div>
+    </div>
+    <div class="card"><h2>By category</h2><div id="cats"></div></div>
+    <div class="card">
+      <h2><span>Insights</span><button class="btn small" id="aiInsightsBtn" hidden>✨ AI insights</button></h2>
+      <div id="aiInsights"></div>
+      <ul class="plain" id="insightList"></ul>
+    </div>
+    <div class="card">
+      <h2>Budget recommendations</h2>
+      <p class="hint" style="margin-top:0">Typical monthly spend → suggested budget</p>
+      <div id="recs"></div>
+    </div>
+    <div class="card">
+      <h2><span>Subscriptions & recurring</span><button class="btn small" id="scanSubs">Re-scan</button></h2>
+      <div id="subs"></div>
+      <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Add a subscription manually</summary>
+        <div class="grid2" style="margin-top:8px">
+          <input type="text" id="subName" placeholder="Name (e.g. iCloud)">
+          <input type="number" id="subAmt" placeholder="Amount" inputmode="decimal">
+          <select class="field" id="subPeriod"><option>monthly</option><option>yearly</option><option>quarterly</option><option>weekly</option></select>
+          <button class="btn" id="subAdd">Add</button>
+        </div>
+      </details>
+    </div>
+    <div class="card"><h2>Who owes you</h2><div id="splits"></div></div>
+    <div class="card"><h2>Top merchants</h2><div id="merchants"></div></div>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="view" id="v-settings">
+    <div class="card">
+      <h2>Theme</h2>
+      <div class="seg" id="themeSeg"><button data-theme="system">System</button><button data-theme="light">Light</button><button data-theme="dark">Dark</button></div>
+    </div>
+    <div class="card">
+      <h2>Daily allowance</h2>
+      <div class="grid2">
+        <label class="label">Per day (₹)<input type="number" id="allowance" inputmode="decimal" min="0"></label>
+        <label class="label">Savings goal %<input type="number" id="goal" inputmode="numeric" min="0" max="90"></label>
+      </div>
+      <p class="hint">Unspent allowance goes into your Savings Pool, and overspending takes it back out. These categories don't count against the daily budget:</p>
+      <div class="chips" id="excluded"></div>
+      <div class="row"><button class="btn primary" id="saveBudget">Save</button></div>
+    </div>
+    <div class="card">
+      <h2>Categories</h2>
+      <div class="chips" id="customCats"></div>
+      <div class="grid2" style="grid-template-columns:1fr auto; margin-top:10px">
+        <input type="text" id="newCat" placeholder="New category (e.g. Pets)" maxlength="30">
+        <button class="btn" id="addCat">Add</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Categorization rules</h2>
+      <p class="hint" style="margin-top:0">Rules run before everything else. Example: anything containing “tails” → Pets.</p>
+      <div class="grid2" style="margin-top:10px">
+        <input type="text" id="rulePattern" placeholder="Text to match" maxlength="200">
+        <select class="field" id="ruleType"><option value="contains">contains</option><option value="merchant">merchant is</option><option value="regex">regex</option></select>
+        <select class="field" id="ruleCat"></select>
+        <input type="number" id="ruleMin" placeholder="Min ₹ (optional)" inputmode="decimal">
+      </div>
+      <div class="row"><button class="btn primary" id="addRule">Add rule</button></div>
+      <div id="rules"></div>
+      <details style="margin-top:10px"><summary class="hint" style="cursor:pointer">Merchants Artha learned from you</summary><div id="learned"></div></details>
+    </div>
+    <div class="card">
+      <h2>AI features</h2>
+      <div class="switch"><span>Use Claude for receipts, voice, questions & insights</span><input type="checkbox" id="aiToggle"></div>
+      <p class="hint" id="aiNote"></p>
+      <p class="hint">Privacy: Claude only sees what you send for that feature, with account numbers and balances removed. That means a receipt you scan, a sentence you speak or type, a question you ask, or monthly totals. It never sees your full ledger.</p>
+    </div>
+    <div class="card">
+      <h2>Automation</h2>
+      <p class="hint" style="margin-top:0">Send every bank or UPI SMS here, and Artha logs it without you typing anything:</p>
+      <p><code id="hookUrl"></code></p>
+      <p class="hint">POST JSON <code>{"message": "&lt;sms text&gt;"}</code> with header <code>X-Token</code>, or add <code>?token=</code> to the URL. In MacroDroid, use “Notification received (Messages)” → “HTTP request”. The README has step-by-step instructions. Set <code>ARTHA_WEBHOOK_TOKEN</code> on the server so your automation app gets a token that can only add payments.</p>
+      <div class="row"><button class="btn small" id="copyHook">Copy URL</button><button class="btn small" id="install" hidden>Install app</button></div>
+    </div>
+    <div class="card">
+      <h2>Your data</h2>
+      <div class="grid2"><button class="btn" id="exportCsv">Export CSV</button><button class="btn" id="exportJson">Full backup</button></div>
+      <label class="btn" style="display:flex;align-items:center;justify-content:center;margin-top:8px">Import bank CSV<input type="file" id="csv" accept=".csv,text/csv" hidden></label>
+      <details style="margin-top:12px"><summary class="hint" style="cursor:pointer;color:var(--red)">Delete data…</summary>
+        <div style="margin-top:10px">
+          <select class="field" id="delScope">
+            <option value="range">Transactions in a date range</option>
+            <option value="transactions">All transactions, splits & subscriptions</option>
+            <option value="learned">Learned merchants & rules</option>
+            <option value="everything">Everything (factory reset)</option>
+          </select>
+          <div class="grid2" id="delRange" style="margin-top:8px"><input type="date" id="delFrom"><input type="date" id="delTo"></div>
+          <input type="text" id="delConfirm" placeholder="Type DELETE to confirm" autocomplete="off" style="margin-top:8px">
+          <div class="row"><button class="btn danger" id="delBtn">Delete permanently</button></div>
+          <p class="hint">Deleted rows are overwritten in the database file, not just hidden. Export a backup first if you might need it.</p>
+        </div>
+      </details>
+    </div>
+    <div class="card">
+      <h2>Security</h2>
+      <p class="hint" style="margin-top:0">Your access token is stored only on this device. Account numbers, balances and OTPs are stripped from messages before they're saved.</p>
+      <div class="row"><button class="btn small" id="changeToken">Change token</button><button class="btn small danger" id="forget">Sign out on this device</button></div>
+    </div>
   </section>
 </main>
+
+<nav class="tabs" aria-label="Sections">
+  <button data-tab="home" class="on"><b>⌂</b>Home<span class="badge" id="badge"></span></button>
+  <button data-tab="activity"><b>☰</b>Activity</button>
+  <button data-tab="insights"><b>◔</b>Insights</button>
+  <button data-tab="settings"><b>⚙</b>Settings</button>
+</nav>
+
+<div class="sheet-bg" id="sheetBg"></div>
+<div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="grab"></div><div id="sheetBody"></div></div>
 <div class="toast" id="toast" role="status"><span id="toastMsg"></span><button id="toastBtn" hidden>Undo</button></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const inr = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+const inr = (n) => (n < 0 ? "−₹" : "₹") + Math.abs(Number(n)).toLocaleString("en-IN", { maximumFractionDigits: 2 });
 const pad = (n) => String(n).padStart(2, "0");
 const localDate = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-let CATS = [], month = localDate().slice(0, 7);
+const esc = (s) => { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; };
+const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+let CATS = [], SETTINGS = {}, month = localDate().slice(0, 7), tab = "home";
 
-function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
-function token() { try { return localStorage.getItem("artha_token") || ""; } catch { return ""; } }
-
+// ---------- api ----------
 async function api(path, opts = {}, retried = false) {
-  const headers = Object.assign({ "X-Token": token() }, opts.headers || {});
-  const r = await fetch(path, { ...opts, headers });
+  const headers = Object.assign({ "X-Token": store.get("artha_token") || "" }, opts.headers || {});
+  if (opts.json !== undefined) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
+  const r = await fetch(path, { method: opts.method || (opts.body ? "POST" : "GET"), body: opts.body, headers });
   if (r.status === 401 && !retried) {
-    const t = prompt("Enter your ARTHA_TOKEN");
-    if (t) { try { localStorage.setItem("artha_token", t.trim()); } catch {} return api(path, opts, true); }
+    const t = prompt("Enter your Artha access token (ARTHA_TOKEN)");
+    if (t) { store.set("artha_token", t.trim()); return api(path, opts, true); }
   }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
-  return r.json();
+  return opts.raw ? r : r.json();
 }
-
 let toastTimer;
-function toast(msg, undo) {
-  $("toastMsg").textContent = msg;
-  $("toastBtn").hidden = !undo;
-  $("toastBtn").onclick = async () => { $("toast").classList.remove("show"); await undo(); load(); };
-  $("toast").classList.add("show");
-  clearTimeout(toastTimer);
+function toast(msg, undo, label = "Undo") {
+  $("toastMsg").textContent = msg; $("toastBtn").hidden = !undo; $("toastBtn").textContent = label;
+  $("toastBtn").onclick = async () => { $("toast").classList.remove("show"); await undo(); refresh(); };
+  $("toast").classList.add("show"); clearTimeout(toastTimer);
   toastTimer = setTimeout(() => $("toast").classList.remove("show"), undo ? 6000 : 3500);
 }
+const fail = (e) => toast(navigator.onLine ? e.message : "You're offline");
 
-function dayLabel(iso) {
-  const today = localDate(), y = new Date(); y.setDate(y.getDate() - 1);
-  if (iso === today) return "Today";
-  if (iso === localDate(y)) return "Yesterday";
-  const [Y, M, D] = iso.split("-").map(Number);
-  return new Date(Y, M - 1, D).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+// ---------- theme ----------
+function applyTheme(t) {
+  if (t === "light" || t === "dark") document.documentElement.dataset.theme = t; else delete document.documentElement.dataset.theme;
+  store.set("artha_theme", t === "system" ? null : t);
+  document.querySelectorAll("#themeSeg button").forEach(b => b.classList.toggle("on", b.dataset.theme === (t || "system")));
+  requestAnimationFrame(() => document.querySelector('meta[name="theme-color"]').content = getComputedStyle(document.body).backgroundColor);
 }
+$("themeSeg").onclick = (e) => { if (e.target.dataset.theme) applyTheme(e.target.dataset.theme); };
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(store.get("artha_theme") || "system"));
 
-async function load() {
+// ---------- tabs & month ----------
+function show(t) {
+  tab = t;
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + t));
+  document.querySelectorAll("nav.tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  $("monthnav").hidden = !(t === "activity" || t === "insights");
+  $("title").textContent = { home: "Artha", activity: "Activity", insights: "Insights", settings: "Settings" }[t];
+  scrollTo(0, 0); refresh();
+}
+document.querySelector("nav.tabs").onclick = (e) => { const b = e.target.closest("button"); if (b) show(b.dataset.tab); };
+document.addEventListener("click", (e) => { const g = e.target.closest("[data-goto]"); if (g) show(g.dataset.goto); });
+function shiftMonth(n) { const [Y, M] = month.split("-").map(Number); const d = new Date(Y, M - 1 + n, 1); month = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; refresh(); }
+$("prev").onclick = () => shiftMonth(-1); $("next").onclick = () => shiftMonth(1);
+function renderMonth() {
   const [Y, M] = month.split("-").map(Number);
   $("monthLabel").textContent = new Date(Y, M - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
   $("next").disabled = month >= localDate().slice(0, 7);
-  $("next").style.opacity = $("next").disabled ? 0.3 : 1;
-  let s, tx;
-  try {
-    [s, tx] = await Promise.all([api(`/api/summary?month=${month}`), api(`/api/transactions?month=${month}`)]);
-  } catch (e) { toast(navigator.onLine ? e.message : "You're offline"); return; }
-  $("s-today").textContent = inr(s.today);
-  $("s-spent").textContent = inr(s.spent);
-  $("s-recv").textContent = inr(s.received);
-  const max = Math.max(1, ...s.by_category.map(c => c.total));
-  $("cats").innerHTML = s.by_category.length ? s.by_category.map(c => `
-    <div class="bar"><span class="name">${esc(c.category)}</span>
-      <div class="track"><div class="fill" style="width:${(c.total / max * 100).toFixed(1)}%"></div></div>
-      <span class="amt">${inr(c.total)}</span></div>`).join("") : '<p class="hint">No spending yet this month.</p>';
+}
 
-  const days = {};
-  tx.forEach(t => (days[t.date] ||= []).push(t));
-  $("tx").innerHTML = Object.keys(days).sort().reverse().map(d => {
-    const total = days[d].filter(t => t.kind === "debit").reduce((a, t) => a + t.amount, 0);
-    return `<div class="day"><span>${dayLabel(d)}</span><span>${inr(total)}</span></div>` + days[d].map(t => `
-      <div class="tx">
-        <div><div class="m">${esc(t.merchant)}</div>
-          <label class="chip">${esc(t.category)} ▾
-            <select data-id="${t.id}" aria-label="Category for ${esc(t.merchant)}">${CATS.map(c => `<option ${c === t.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
-          </label></div>
-        <div class="a ${t.kind === "credit" ? "credit" : ""}">${t.kind === "credit" ? "+" : ""}${inr(t.amount)}</div>
-        <button class="del" data-del="${t.id}" aria-label="Delete">✕</button>
-      </div>`).join("");
+function dayLabel(iso) {
+  const y = new Date(); y.setDate(y.getDate() - 1);
+  if (iso === localDate()) return "Today"; if (iso === localDate(y)) return "Yesterday";
+  const [Y, M, D] = iso.split("-").map(Number);
+  return new Date(Y, M - 1, D).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+}
+function txRow(t) {
+  const share = t.my_share != null && t.my_share !== t.amount;
+  return `<div class="tx" data-tx="${t.id}">
+    <div><div class="m">${esc(t.merchant)}</div>
+      <div class="sub"><span class="chip">${esc(t.category)}</span>${t.needs_review ? '<span class="chip warn">check</span>' : ""}${t.is_recurring ? "<span>↻</span>" : ""}${share ? `<span>your share ${inr(t.my_share)}</span>` : ""}</div></div>
+    <div class="amt ${t.kind === "credit" ? "credit" : ""}">${t.kind === "credit" ? "+" : ""}${inr(t.amount)}</div></div>`;
+}
+function grouped(list) {
+  const days = {}; list.forEach(t => (days[t.date] ||= []).push(t));
+  return Object.keys(days).sort().reverse().map(d => {
+    const total = days[d].filter(t => t.kind === "debit").reduce((a, t) => a + (t.my_share ?? t.amount), 0);
+    return `<div class="day"><span>${dayLabel(d)}</span><span>${inr(total)}</span></div>` + days[d].map(txRow).join("");
   }).join("") || '<p class="hint">Nothing here yet.</p>';
 }
+document.addEventListener("click", (e) => { const r = e.target.closest("[data-tx]"); if (r) openTx(+r.dataset.tx); });
+document.addEventListener("click", (e) => { const r = e.target.closest("[data-merchant]"); if (r) { e.preventDefault(); e.stopPropagation(); openMerchant(r.dataset.merchant); } }, true);
 
-async function addText(text) {
-  text = (text || "").trim();
-  if (!text) return;
+// ---------- refresh ----------
+async function refresh() {
+  renderMonth();
   try {
-    const r = await api("/api/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-    const ids = r.added.map(t => t.id);
-    let msg = r.added.length === 1 ? `${inr(r.added[0].amount)} · ${r.added[0].category}` : `Added ${r.added.length}`;
-    if (r.duplicates) msg = r.added.length ? `${msg}, ${r.duplicates} already saved` : "Already saved";
-    if (!r.added.length && !r.duplicates) msg = "Couldn't find an amount in that";
-    else $("input").value = "";
-    toast(msg, ids.length ? () => Promise.all(ids.map(id => api(`/api/transactions/${id}`, { method: "DELETE" }))) : null);
-    if (r.skipped.length && r.added.length) $("input").value = r.skipped.join("\n");
-    if (r.added.length) { month = r.added[0].date.slice(0, 7); }
-    load();
-  } catch (e) { toast(e.message); }
+    if (tab === "home") await loadHome();
+    else if (tab === "activity") await loadActivity();
+    else if (tab === "insights") await loadInsights();
+    else await loadSettings();
+  } catch (e) { fail(e); }
 }
 
+async function loadHome() {
+  const [s, review, recent] = await Promise.all([api(`/api/summary?month=${localDate().slice(0, 7)}`), api("/api/review"), api("/api/transactions?limit=6")]);
+  const b = s.budget;
+  $("leftToday").textContent = inr(b.left_today);
+  $("leftToday").style.color = b.left_today < 0 ? "var(--red)" : "";
+  $("ofAllowance").textContent = `of ${inr(b.daily_allowance)} · spent ${inr(b.spent_today)}`;
+  $("pool").textContent = inr(b.savings_pool);
+  $("pool").style.color = b.savings_pool < 0 ? "var(--red)" : "";
+  $("poolSub").textContent = b.under_budget_streak > 1 ? `${b.under_budget_streak}-day streak under budget` : `since ${dayLabel(b.since)}`;
+  const pct = b.daily_allowance ? Math.min(100, b.spent_today / b.daily_allowance * 100) : 0;
+  $("meter").firstElementChild.style.width = pct + "%"; $("meter").classList.toggle("over", b.left_today < 0);
+  $("badge").textContent = review.length; $("badge").style.display = review.length ? "flex" : "none";
+  $("reviewCard").hidden = !review.length; $("reviewCount").textContent = review.length;
+  $("reviewList").innerHTML = review.map(reviewItem).join("");
+  $("recent").innerHTML = recent.map(txRow).join("") || '<p class="hint">No spending yet. Add one above, or set up automation in Settings.</p>';
+}
+function reviewItem(t) {
+  const top = ["Food & Dining", "Groceries", "Shopping", "Transport", "Bills & Utilities", "Entertainment"].filter(c => c !== t.category);
+  let actions;
+  if (t.review_reason === "duplicate") actions = `<div class="chips"><button data-rv="${t.id}" data-act="delete">Delete duplicate</button><button data-rv="${t.id}" data-act="confirm">Both are real</button></div>`;
+  else if (t.review_reason === "cancelled_subscription") actions = `<div class="chips"><button data-rv="${t.id}" data-act="reactivate_subscription">It's active again</button><button data-rv="${t.id}" data-act="confirm">One-off charge</button></div>`;
+  else if (t.review_reason === "unknown_merchant") actions = `<div class="grid2" style="margin-top:10px;grid-template-columns:1fr auto"><input type="text" id="rvm-${t.id}" placeholder="Who did you pay?"><button class="btn" data-rv="${t.id}" data-act="name">Save</button></div>`;
+  else actions = `<div class="chips">${top.map(c => `<button data-rv="${t.id}" data-cat="${esc(c)}">${esc(c)}</button>`).join("")}<button data-rv="${t.id}" data-act="more">More…</button>${t.review_reason === "low_confidence" ? `<button data-rv="${t.id}" data-act="confirm">Looks right</button>` : ""}</div>`;
+  return `<div class="q"><div class="top"><span>${esc(t.merchant)} · ${dayLabel(t.date)}</span><span>${inr(t.amount)}</span></div>
+    <div class="hint">${esc(t.question || "")}</div>${actions}</div>`;
+}
+$("reviewList").onclick = async (e) => {
+  const b = e.target.closest("[data-rv]"); if (!b) return;
+  const id = b.dataset.rv, act = b.dataset.act;
+  try {
+    if (act === "more") return openTx(+id);
+    if (act === "name") {
+      const m = $("rvm-" + id).value.trim(); if (!m) return;
+      await api(`/api/review/${id}`, { json: { action: "confirm", merchant: m } });
+      return openTx(+id); // now pick a category if needed
+    }
+    await api(`/api/review/${id}`, { json: { action: act || "confirm", category: b.dataset.cat || null } });
+    toast(b.dataset.cat ? `Saved. Future ${b.closest(".q").querySelector(".top span").textContent.split(" · ")[0]} payments will be ${b.dataset.cat}` : "Done");
+    refresh();
+  } catch (err) { fail(err); }
+};
+
+// ---------- capture ----------
+async function addText(text, smart = false) {
+  text = (text || "").trim(); if (!text) return;
+  try {
+    const r = await api("/api/ingest", { json: { text, smart } });
+    const ids = r.added.map(t => t.id);
+    let msg = r.added.length === 1 ? `${inr(r.added[0].amount)} · ${r.added[0].merchant} · ${r.added[0].category}` : `Added ${r.added.length}`;
+    if (r.added.length === 1 && r.added[0].needs_review) msg += ". Needs a quick answer";
+    if (r.duplicates) msg += ` · ${r.duplicates} already saved`;
+    if (r.ignored) msg += ` · ignored ${r.ignored} non-payment message${r.ignored > 1 ? "s" : ""}`;
+    if (!r.added.length && !r.duplicates) msg = r.ignored ? "That's not a completed payment (OTP, reminder or failed)" : (r.notes[0] || "Couldn't find an amount in that");
+    $("input").value = r.skipped.join("\n");
+    toast(msg, ids.length ? () => Promise.all(ids.map(id => api(`/api/transactions/${id}`, { method: "DELETE" }))) : null);
+    refresh();
+  } catch (e) { fail(e); }
+}
 $("add").onclick = () => addText($("input").value);
 $("paste").onclick = async () => {
-  try {
-    const t = await navigator.clipboard.readText();
-    if (!t.trim()) return toast("Clipboard is empty");
-    $("input").value = t;
-    addText(t);
-  } catch { $("input").focus(); toast("Long-press the box and tap Paste"); }
+  try { const t = await navigator.clipboard.readText(); if (!t.trim()) return toast("Clipboard is empty"); $("input").value = t; addText(t); }
+  catch { $("input").focus(); toast("Long-press the box and tap Paste"); }
 };
-$("csv").onchange = async (e) => {
-  const f = e.target.files[0]; if (!f) return;
-  const fd = new FormData(); fd.append("file", f);
-  try { const r = await api("/api/import/csv", { method: "POST", body: fd }); toast(`Imported ${r.added}, skipped ${r.skipped}`); load(); }
-  catch (err) { toast(err.message); }
-  e.target.value = "";
-};
-$("export").onclick = (e) => { e.preventDefault(); location.href = "/api/export.csv?token=" + encodeURIComponent(token()); };
-$("tx").addEventListener("change", async (e) => {
-  const id = e.target.dataset.id; if (!id) return;
-  try {
-    await api(`/api/transactions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category: e.target.value }) });
-    toast(`Got it, I'll use ${e.target.value} for this merchant from now on`);
-  } catch (err) { toast(err.message); }
-  load();
-});
-$("tx").addEventListener("click", async (e) => {
-  const id = e.target.dataset.del; if (!id) return;
-  const row = await api(`/api/transactions?month=${month}`).then(l => l.find(t => String(t.id) === id));
-  await api(`/api/transactions/${id}`, { method: "DELETE" });
-  load();
-  if (row) toast(`Deleted ${row.merchant}`, () => api("/api/transactions", { method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ amount: row.amount, merchant: row.merchant, category: row.category, kind: row.kind, date: row.date, note: row.note || "" }) }));
-});
-function shiftMonth(n) {
-  const [Y, M] = month.split("-").map(Number); const d = new Date(Y, M - 1 + n, 1);
-  month = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; load();
-}
-$("prev").onclick = () => shiftMonth(-1);
-$("next").onclick = () => shiftMonth(1);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
 
-// Install as an app (Chrome on Android shows this when the site is served over HTTPS).
+// voice (Chrome on Android: on-device speech recognition)
+let rec;
+$("voice").onclick = () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return toast("Voice input isn't supported in this browser");
+  if (rec) { rec.stop(); return; }
+  rec = new SR(); rec.lang = "en-IN"; rec.interimResults = true; rec.maxAlternatives = 1;
+  let finalText = "";
+  rec.onresult = (e) => { finalText = Array.from(e.results).map(r => r[0].transcript).join(" "); $("input").value = finalText; };
+  rec.onerror = (e) => toast(e.error === "not-allowed" ? "Allow microphone access to use voice" : "Didn't catch that");
+  rec.onend = () => { $("voice").classList.remove("recording"); rec = null; if (finalText.trim()) addText(finalText, true); };
+  rec.start(); $("voice").classList.add("recording"); toast("Listening… e.g. “450 on coffee with Asha, split it”");
+};
+
+// receipt / invoice scanning
+$("scan").onclick = () => {
+  if (!SETTINGS.ai_enabled || !SETTINGS.ai_available) return toast("Turn on AI features in Settings to scan receipts", () => show("settings"), "Open");
+  $("receiptFile").click();
+};
+async function shrink(file) {
+  if (!file.type.startsWith("image/") || file.size < 1.5e6) return file;
+  const img = await createImageBitmap(file); const scale = Math.min(1, 1800 / Math.max(img.width, img.height));
+  const c = document.createElement("canvas"); c.width = img.width * scale; c.height = img.height * scale;
+  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+  return new Promise(r => c.toBlob(b => r(new File([b], "receipt.jpg", { type: "image/jpeg" })), "image/jpeg", 0.85));
+}
+$("receiptFile").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  toast("Reading receipt…");
+  try {
+    const fd = new FormData(); fd.append("file", await shrink(f));
+    const r = await api("/api/receipt", { body: fd });
+    const t = r.transaction;
+    toast(`${inr(t.amount)} · ${t.merchant} · ${t.category}`, () => api(`/api/transactions/${t.id}`, { method: "DELETE" }));
+    refresh();
+  } catch (err) { fail(err); }
+};
+
+// ---------- activity ----------
+async function loadActivity() {
+  const tx = await api(`/api/transactions?month=${month}`);
+  const total = tx.filter(t => t.kind === "debit").reduce((a, t) => a + (t.my_share ?? t.amount), 0);
+  $("txTotal").textContent = inr(total); $("tx").innerHTML = grouped(tx);
+}
+$("askForm").onsubmit = async (e) => {
+  e.preventDefault(); const q = $("ask").value.trim(); if (!q) return;
+  $("askResult").innerHTML = '<p class="hint">Thinking…</p>';
+  try {
+    const r = await api("/api/ask", { json: { question: q } });
+    $("askResult").innerHTML = `<p class="answer">${esc(r.answer)}</p>` +
+      (r.transactions.length ? grouped(r.transactions.slice(0, 50)) : "") + (r.used_ai ? '<p class="hint">Understood with AI</p>' : "");
+  } catch (err) { $("askResult").innerHTML = ""; fail(err); }
+};
+
+// ---------- insights ----------
+async function loadInsights() {
+  const [ins, subs, splits, merch] = await Promise.all([api(`/api/insights?month=${month}`), api("/api/subscriptions"), api("/api/splits"), api("/api/merchants")]);
+  const st = ins.stats;
+  $("i-spent").textContent = inr(st.spent); $("i-recv").textContent = inr(st.received);
+  const cats = Object.entries(st.by_category).sort((a, b) => b[1] - a[1]); const max = Math.max(1, ...cats.map(c => c[1]));
+  $("cats").innerHTML = cats.map(([c, v]) => `<div class="bar"><span class="name">${esc(c)}</span><div class="track"><div class="fill" style="width:${(v / max * 100).toFixed(1)}%"></div></div><span class="num">${inr(v)}</span></div>`).join("") || '<p class="hint">No spending this month.</p>';
+  $("insightList").innerHTML = ins.insights.map(i => `<li>${esc(i)}</li>`).join("");
+  $("aiInsightsBtn").hidden = !ins.ai_ready; $("aiInsights").innerHTML = "";
+  const rec = ins.recommendations;
+  $("recs").innerHTML = `<div class="list-item"><div><div>Suggested daily allowance</div><div class="hint" style="margin:0">Based on your ${rec.basis} (${rec.based_on.join(", ")}). Currently ${inr(rec.current_daily_allowance)}.</div></div>
+      <button class="btn small primary" id="applyAllowance" data-v="${rec.suggested_daily_allowance}">Use ${inr(rec.suggested_daily_allowance)}</button></div>` +
+    rec.categories.filter(c => c.flexible).map(c => `<div class="list-item"><span>${esc(c.category)}</span><span class="num" style="font-size:14px">${inr(c.typical)} → <b>${inr(c.suggested)}</b></span></div>`).join("") +
+    (rec.tips.length ? `<ul class="plain" style="margin-top:8px">${rec.tips.map(t => `<li>${esc(t)}</li>`).join("")}</ul>` : "");
+  $("subs").innerHTML = (subs.monthly_total ? `<p class="answer" style="margin-top:0">Subscriptions: ${inr(subs.monthly_total)}/month · ${inr(subs.yearly_total)}/year</p>` : "") +
+    (subs.fixed_monthly_total ? `<p class="hint" style="margin-top:0">Plus ${inr(subs.fixed_monthly_total)}/month in recurring rent, bills and investments</p>` : "") +
+    (subs.subscriptions.map(s => `<div class="list-item"><div><div><a href="#" data-merchant="${esc(s.name)}">${esc(s.name)}</a> ${s.status !== "active" ? `<span class="chip ${s.status === "suggested" ? "warn" : ""}">${s.status}</span>` : ""}</div>
+        <div class="hint" style="margin:0">${inr(s.amount)} ${s.period}${s.next_date && s.status === "active" ? (s.days_until < 0 ? ` · was due ${dayLabel(s.next_date)}` : ` · next ${dayLabel(s.next_date)}${s.days_until <= 3 ? " ⚠" : ""}`) : ""}</div></div>
+        <div class="row" style="margin:0;flex-wrap:nowrap">${s.status === "suggested" ? `<button class="btn small" data-sub="${s.id}" data-st="active">Yes</button><button class="btn small" data-sub="${s.id}" data-st="ignored">No</button>`
+          : s.status === "active" ? `<button class="btn small" data-sub="${s.id}" data-st="cancelled">Cancelled</button>` : `<button class="btn small" data-sub="${s.id}" data-st="active">Active</button>`}</div></div>`).join("")
+     || '<p class="hint">No recurring payments detected yet. They show up after two similar charges, or one charge from a known service like Netflix.</p>');
+  $("splits").innerHTML = splits.map(b => `<div class="list-item"><span>${esc(b.person)} <span class="hint">(${b.items})</span></span><span class="row" style="margin:0"><b>${inr(b.owed)}</b><button class="btn small" data-settle="${esc(b.person)}">Settled</button></span></div>`).join("")
+    || '<p class="hint">Nobody owes you. Split a payment from its details, or type “900 dinner split with Rahul”.</p>';
+  $("merchants").innerHTML = merch.slice(0, 8).map(m => `<div class="list-item" data-merchant="${esc(m.merchant)}" style="cursor:pointer"><span>${esc(m.merchant)} <span class="hint">×${m.count}</span></span><span class="num">${inr(m.total)}</span></div>`).join("") || '<p class="hint">No merchants yet.</p>';
+}
+$("v-insights").addEventListener("click", async (e) => {
+  try {
+    const s = e.target.closest("[data-sub]");
+    if (s) { await api(`/api/subscriptions/${s.dataset.sub}`, { method: "PATCH", json: { status: s.dataset.st } }); return refresh(); }
+    const p = e.target.closest("[data-settle]");
+    if (p) { await api("/api/splits/settle", { json: { person: p.dataset.settle } }); toast(`${p.dataset.settle} is settled`); return refresh(); }
+    if (e.target.id === "applyAllowance") { await api("/api/settings", { method: "PUT", json: { daily_allowance: +e.target.dataset.v } }); toast("Daily allowance updated"); return refresh(); }
+  } catch (err) { fail(err); }
+});
+$("scanSubs").onclick = async () => { try { await api("/api/subscriptions/scan", { method: "POST" }); toast("Scanned for recurring payments"); refresh(); } catch (e) { fail(e); } };
+$("subAdd").onclick = async () => {
+  try { await api("/api/subscriptions", { json: { name: $("subName").value, amount: +$("subAmt").value, period: $("subPeriod").value } }); $("subName").value = $("subAmt").value = ""; refresh(); } catch (e) { fail(e); }
+};
+$("aiInsightsBtn").onclick = async () => {
+  $("aiInsights").innerHTML = '<p class="hint">Writing your insights…</p>';
+  try {
+    const r = await api(`/api/insights/ai?month=${month}`, { method: "POST" });
+    $("aiInsights").innerHTML = `<p class="answer" style="margin-top:0">${esc(r.headline)}</p><ul class="plain">${r.insights.map(i => `<li>${esc(i)}</li>`).join("")}</ul>
+      <p class="answer">Recommendations</p><ul class="plain">${r.recommendations.map(i => `<li>${esc(i)}</li>`).join("")}</ul><hr style="border:none;border-top:1px solid var(--line);margin:12px 0">`;
+  } catch (e) { $("aiInsights").innerHTML = ""; fail(e); }
+};
+
+// ---------- sheets: transaction detail & merchant history ----------
+function openSheet(html) { $("sheetBody").innerHTML = html; $("sheetBg").style.display = "block"; requestAnimationFrame(() => $("sheet").classList.add("show")); }
+function closeSheet() { $("sheet").classList.remove("show"); $("sheetBg").style.display = "none"; }
+$("sheetBg").onclick = closeSheet;
+addEventListener("popstate", closeSheet);
+
+async function openTx(id) {
+  try {
+    const t = await api(`/api/transactions/${id}`);
+    const splitHtml = t.splits.length ? t.splits.map(s => `<div class="list-item"><span>${esc(s.person)}</span><span>${inr(s.amount)} ${s.settled ? '<span class="chip">paid</span>' : ""}</span></div>`).join("") +
+      `<div class="list-item"><span>You</span><b>${inr(t.my_share ?? t.amount)}</b></div><button class="btn small danger" id="unsplit">Remove split</button>` :
+      `<div class="grid2" style="grid-template-columns:1fr auto"><input type="text" id="splitPeople" placeholder="Names: Rahul, Priya (or a number)"><button class="btn" id="doSplit">Split</button></div>`;
+    openSheet(`
+      <h2><span>${esc(t.merchant)}</span><span class="amt ${t.kind === "credit" ? "credit" : ""}" style="font-size:20px">${inr(t.amount)}</span></h2>
+      ${t.question ? `<p class="hint" style="color:var(--amber)">${esc(t.question)}</p>` : ""}
+      <div class="grid2">
+        <label class="label">Merchant<input type="text" id="e-merchant" value="${esc(t.merchant)}"></label>
+        <label class="label">Amount<input type="number" id="e-amount" value="${t.amount}" inputmode="decimal"></label>
+        <label class="label">Date<input type="date" id="e-date" value="${t.date}" max="${localDate()}"></label>
+        <label class="label">Category<select class="field" id="e-cat">${CATS.map(c => `<option ${c === t.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+      </div>
+      <p class="hint">${esc(t.note || "")}</p>
+      <div class="row"><button class="btn primary" id="saveTx">Save</button><button class="btn" data-merchant="${esc(t.merchant)}">History</button><button class="btn danger" id="delTx">Delete</button></div>
+      ${t.kind === "debit" ? `<h2 style="margin-top:20px">Split this expense</h2>${splitHtml}` : ""}`);
+    $("saveTx").onclick = async () => {
+      try {
+        await api(`/api/transactions/${id}`, { method: "PATCH", json: { merchant: $("e-merchant").value.trim(), amount: +$("e-amount").value, date: $("e-date").value, category: $("e-cat").value } });
+        if (t.needs_review) await api(`/api/review/${id}`, { json: { action: "confirm" } });
+        closeSheet(); toast("Saved. Artha will remember this merchant's category"); refresh();
+      } catch (e) { fail(e); }
+    };
+    $("delTx").onclick = async () => {
+      await api(`/api/transactions/${id}`, { method: "DELETE" }); closeSheet(); refresh();
+      toast(`Deleted ${t.merchant}`, () => api("/api/transactions", { json: { amount: t.amount, merchant: t.merchant, category: t.category, kind: t.kind, date: t.date, note: t.note || "" } }));
+    };
+    if ($("doSplit")) $("doSplit").onclick = async () => {
+      const v = $("splitPeople").value.trim(); if (!v) return;
+      const body = /^\d+$/.test(v) ? { ways: +v } : { people: v.split(/,|\band\b|&/).map(s => s.trim()).filter(Boolean) };
+      try { await api(`/api/transactions/${id}/split`, { json: body }); openTx(id); refresh(); } catch (e) { fail(e); }
+    };
+    if ($("unsplit")) $("unsplit").onclick = async () => { await api(`/api/transactions/${id}/split`, { method: "DELETE" }); openTx(id); refresh(); };
+  } catch (e) { fail(e); }
+}
+async function openMerchant(name) {
+  try {
+    const h = await api(`/api/merchants/history?name=${encodeURIComponent(name)}`);
+    const max = Math.max(1, ...h.monthly.map(m => m.total));
+    const mlabel = (m) => new Date(+m.slice(0, 4), +m.slice(5) - 1, 1).toLocaleDateString("en-IN", { month: "short" });
+    openSheet(`<h2><span>${esc(h.merchant)}</span>${h.subscription ? `<span class="chip">${esc(h.subscription.period)} · ${esc(h.subscription.status)}</span>` : ""}</h2>
+      <div class="grid2"><div><div class="label">Total</div><div class="big">${inr(h.total)}</div></div><div><div class="label">${h.count} payments · avg</div><div class="big">${inr(h.average)}</div></div></div>
+      <div class="minichart" role="img" aria-label="Monthly spending at ${esc(h.merchant)} over the last 12 months">${h.monthly.map(m => `<div class="${m.total ? "" : "zero"}" style="height:${Math.max(3, m.total / max * 100)}%" title="${mlabel(m.month)}: ${inr(m.total)}"></div>`).join("")}</div>
+      <div class="axis"><span>${mlabel(h.monthly[0].month)}</span><span>${mlabel(h.monthly[11].month)}</span></div>
+      <p class="hint">${h.first ? `First ${dayLabel(h.first)} · last ${dayLabel(h.last)}` : ""}</p>
+      ${grouped(h.transactions.map(t => ({ ...t, merchant: h.merchant })))}`);
+  } catch (e) { fail(e); }
+}
+
+// ---------- settings ----------
+async function loadSettings() {
+  const [s, rules] = await Promise.all([api("/api/settings"), api("/api/rules")]);
+  SETTINGS = s; CATS = await api("/api/categories");
+  applyTheme(store.get("artha_theme") || "system");
+  $("allowance").value = s.daily_allowance; $("goal").value = s.savings_goal_pct;
+  $("excluded").innerHTML = CATS.map(c => `<button class="${s.excluded_categories.includes(c) ? "on" : ""}" data-ex="${esc(c)}">${esc(c)}</button>`).join("");
+  $("customCats").innerHTML = s.custom_categories.map(c => `<button data-rmcat="${esc(c)}">${esc(c)} ✕</button>`).join("") || '<span class="hint">No custom categories yet.</span>';
+  $("ruleCat").innerHTML = CATS.map(c => `<option>${esc(c)}</option>`).join("");
+  $("rules").innerHTML = rules.rules.map(r => `<div class="list-item"><span>${esc(r.match_type)} “${esc(r.pattern)}”${r.min_amount != null ? ` ≥ ${inr(r.min_amount)}` : ""} → <b>${esc(r.category)}</b></span><button class="btn small danger" data-rmrule="${r.id}">✕</button></div>`).join("");
+  $("learned").innerHTML = rules.learned.map(l => `<div class="list-item"><span>${esc(l.merchant)} → ${esc(l.category)}</span><button class="btn small" data-forget="${esc(l.merchant)}">Forget</button></div>`).join("") || '<p class="hint">Nothing learned yet.</p>';
+  $("aiToggle").checked = !!s.ai_enabled; $("aiToggle").disabled = !s.ai_available;
+  $("aiNote").textContent = s.ai_available ? "" : "AI features need ANTHROPIC_API_KEY set on the server. Everything else works without it.";
+  $("hookUrl").textContent = location.origin + "/api/sms";
+  $("delRange").hidden = $("delScope").value !== "range";
+}
+$("excluded").onclick = (e) => { const b = e.target.closest("[data-ex]"); if (b) b.classList.toggle("on"); };
+$("saveBudget").onclick = async () => {
+  try {
+    await api("/api/settings", { method: "PUT", json: { daily_allowance: +$("allowance").value, savings_goal_pct: +$("goal").value,
+      excluded_categories: [...document.querySelectorAll("#excluded .on")].map(b => b.dataset.ex) } });
+    toast("Budget saved. New allowance applies from today");
+  } catch (e) { fail(e); }
+};
+$("addCat").onclick = async () => {
+  const c = $("newCat").value.trim(); if (!c) return;
+  try { await api("/api/settings", { method: "PUT", json: { custom_categories: [...SETTINGS.custom_categories, c] } }); $("newCat").value = ""; refresh(); } catch (e) { fail(e); }
+};
+$("customCats").onclick = async (e) => {
+  const b = e.target.closest("[data-rmcat]"); if (!b) return;
+  await api("/api/settings", { method: "PUT", json: { custom_categories: SETTINGS.custom_categories.filter(c => c !== b.dataset.rmcat) } }); refresh();
+};
+$("addRule").onclick = async () => {
+  const pattern = $("rulePattern").value.trim(); if (!pattern) return;
+  try {
+    const r = await api("/api/rules", { json: { pattern, match_type: $("ruleType").value, category: $("ruleCat").value, min_amount: $("ruleMin").value ? +$("ruleMin").value : null } });
+    $("rulePattern").value = $("ruleMin").value = ""; toast(`Rule added. Updated ${r.updated_transactions} past transaction(s)`); refresh();
+  } catch (e) { fail(e); }
+};
+$("rules").onclick = async (e) => { const b = e.target.closest("[data-rmrule]"); if (b) { await api(`/api/rules/${b.dataset.rmrule}`, { method: "DELETE" }); refresh(); } };
+$("learned").onclick = async (e) => { const b = e.target.closest("[data-forget]"); if (b) { await api(`/api/learned/${encodeURIComponent(b.dataset.forget)}`, { method: "DELETE" }); refresh(); } };
+$("aiToggle").onchange = async (e) => { try { SETTINGS = await api("/api/settings", { method: "PUT", json: { ai_enabled: e.target.checked } }); toast(e.target.checked ? "AI features on" : "AI features off"); } catch (err) { fail(err); } };
+$("copyHook").onclick = async () => { try { await navigator.clipboard.writeText($("hookUrl").textContent); toast("Copied"); } catch { toast("Long-press the URL to copy it"); } };
+async function download(path, name) {
+  try { const r = await api(path, { raw: true }); const url = URL.createObjectURL(await r.blob()); const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); } catch (e) { fail(e); }
+}
+$("exportCsv").onclick = () => download("/api/export.csv", "artha-transactions.csv");
+$("exportJson").onclick = () => download("/api/export.json", "artha-backup.json");
+$("csv").onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = ""; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  try { const r = await api("/api/import/csv", { body: fd }); toast(`Imported ${r.added}, skipped ${r.skipped}`); } catch (err) { fail(err); }
+};
+$("delScope").onchange = () => { $("delRange").hidden = $("delScope").value !== "range"; };
+$("delBtn").onclick = async () => {
+  if ($("delConfirm").value !== "DELETE") return toast("Type DELETE to confirm");
+  try {
+    const r = await api("/api/data/delete", { json: { scope: $("delScope").value, confirm: "DELETE", date_from: $("delFrom").value || null, date_to: $("delTo").value || null } });
+    $("delConfirm").value = ""; toast(`Deleted. ${r.remaining_transactions} transactions remain`); refresh();
+  } catch (e) { fail(e); }
+};
+$("changeToken").onclick = () => { const t = prompt("New access token"); if (t) { store.set("artha_token", t.trim()); refresh(); } };
+$("forget").onclick = () => { if (confirm("Remove the access token from this device?")) { store.set("artha_token", null); location.reload(); } };
+
+// ---------- install, offline, startup ----------
 let installEvt;
-addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("install").style.display = "inline-flex"; });
-$("install").onclick = async (e) => { e.preventDefault(); if (installEvt) { installEvt.prompt(); installEvt = null; $("install").style.display = "none"; } };
+addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("install").hidden = false; });
+$("install").onclick = () => { if (installEvt) { installEvt.prompt(); installEvt = null; $("install").hidden = true; } };
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 
 (async () => {
-  try { CATS = await api("/api/categories"); } catch {}
+  applyTheme(store.get("artha_theme") || "system");
+  try { [CATS, SETTINGS] = await Promise.all([api("/api/categories"), api("/api/settings")]); } catch (e) { fail(e); }
   const q = new URLSearchParams(location.search);
   const shared = [q.get("text"), q.get("title")].find(v => v && v.trim());
   if (location.pathname === "/share" || q.has("add")) history.replaceState(null, "", "/");
   if (shared) { $("input").value = shared; await addText(shared); }
-  else { if (q.has("add")) $("input").focus(); load(); }
+  else { if (q.has("add")) $("input").focus(); refresh(); }
 })();
 </script>
 </body>

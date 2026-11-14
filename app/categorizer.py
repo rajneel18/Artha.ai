@@ -73,12 +73,31 @@ def _norm(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
-def categorize(text: str, merchant: str | None = None, learned: dict[str, str] | None = None) -> str:
+def rule_matches(rule: dict, text: str, merchant: str, amount: float | None) -> bool:
+    if rule.get("min_amount") is not None and (amount is None or amount < rule["min_amount"]):
+        return False
+    if rule.get("max_amount") is not None and (amount is None or amount > rule["max_amount"]):
+        return False
+    pat, kind = rule["pattern"], rule.get("match_type", "contains")
+    if kind == "merchant":
+        return _norm(pat) == _norm(merchant)
+    if kind == "regex":
+        try:
+            return bool(re.search(pat, f"{merchant} {text}", re.I))
+        except re.error:
+            return False
+    return _norm(pat) in f" {_norm(merchant)} {_norm(text)} "
+
+
+def categorize(text: str, merchant: str | None = None, learned: dict[str, str] | None = None,
+               rules: list[dict] | None = None, amount: float | None = None) -> str:
     """Return the best category for a transaction.
 
-    `learned` maps a normalized merchant name to a category the user picked earlier;
-    it always wins over built-in keywords.
+    Order: your custom rules (highest priority first) -> merchants you corrected before -> built-in keywords.
     """
+    for rule in sorted(rules or [], key=lambda r: -r.get("priority", 0)):
+        if rule_matches(rule, text or "", merchant or "", amount):
+            return rule["category"]
     m = _norm(merchant or "")
     if learned and m:
         if m in learned:

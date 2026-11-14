@@ -1,6 +1,6 @@
 """Turn free text or bank / UPI SMS messages into structured transactions."""
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 
 AMOUNT_RE = re.compile(
@@ -20,6 +20,7 @@ MERCHANT_PATTERNS = [
     re.compile(r"\bto\s+([A-Za-z][\w .&'@-]{1,40}?)(?=\s+(?:on|via|ref|upi|using|from|for|txn|dated|avl|\d{1,2}[-/])\b|[.,;]|$)", re.I),
     re.compile(r"\bon\s+([A-Za-z][\w .&'@-]{1,40}?)(?=\s+(?:on|via|ref|upi|using|from|for|txn|dated|avl|\d{1,2}[-/])\b|[.,;]|$)", re.I),
     re.compile(r";\s*([A-Za-z][\w .&'-]{2,40}?)\s+credited", re.I),
+    re.compile(r"\b(?:from|by)\s+([A-Za-z][\w .&'@-]{1,40}?)(?=\s+(?:on|via|ref|upi|using|for|txn|dated|avl|\d{1,2}[-/])\b|[.,;]|$)", re.I),
 ]
 DATE_PATTERNS = [
     ("%d-%m-%y", re.compile(r"\b(\d{1,2}-\d{1,2}-\d{2})\b")),
@@ -31,6 +32,15 @@ DATE_PATTERNS = [
     ("%d%b%y", re.compile(r"\b(\d{1,2}[A-Za-z]{3}\d{2})\b")),
     ("%Y-%m-%d", re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")),
 ]
+# Messages that mention money but are not a completed payment: OTPs, failures, reminders, requests.
+NON_TXN = re.compile(
+    r"(?i)\b(otp|one[- ]time password|verification code|failed|declined|unsuccessful|could not be processed|"
+    r"will be debited|to be debited|is due|due on|due date|payment due|min(?:imum)? amt|minimum amount due|"
+    r"collect request|has requested|requested (?:rs|inr|money)|statement (?:for|generated)|pre-?approved|"
+    r"loan of)\b")
+SPLIT_RE = re.compile(r"(?i)\b(?:split|shared?|divide[d]?)\b(?:\s+(?:it|this|bill))?"
+                      r"(?:\s+(?:with|between|among)\s+(?P<people>[a-z ,&]+?))?(?:\s+(?P<ways>\d+|two|three|four|five|six)\s+ways?)?(?=$|[.;]|\s+(?:on|for|at|today|yesterday)\b)")
+WORD_NUM = {"two": 2, "three": 3, "four": 4, "five": 5, "six": 6}
 STOPWORDS = {"on", "for", "at", "to", "spent", "paid", "rs", "inr", "rupees", "the", "a", "my"}
 
 
@@ -42,6 +52,9 @@ class Parsed:
     note: str
     date: date
     source: str  # "sms" or "text"
+    confident: bool = True
+    split_with: list[str] = field(default_factory=list)
+    split_ways: int | None = None
 
 
 def _to_float(s: str) -> float:
@@ -101,11 +114,28 @@ def _find_merchant(text: str, is_sms: bool) -> str:
     return _clean_merchant(" ".join(words[:3])) if words else "Unknown"
 
 
+def is_non_transaction(text: str) -> bool:
+    return bool(NON_TXN.search(text or ""))
+
+
+def _find_split(text: str) -> tuple[str, list[str], int | None]:
+    m = SPLIT_RE.search(text)
+    if not m:
+        return text, [], None
+    people = []
+    if m.group("people"):
+        people = [p.strip().title() for p in re.split(r",|&|\band\b", m.group("people")) if p.strip()]
+        people = [p for p in people if p.lower() not in {"me", "i", "myself"}]
+    ways = m.group("ways")
+    ways = int(ways) if ways and ways.isdigit() else WORD_NUM.get((ways or "").lower())
+    return (text[:m.start()] + " " + text[m.end():]).strip(), people, ways
+
+
 def parse_message(text: str, today: date | None = None) -> Parsed | None:
-    """Parse one line / one SMS. Returns None if no amount can be found."""
+    """Parse one line / one SMS. Returns None if no amount can be found or it isn't a real payment."""
     today = today or date.today()
     text = (text or "").strip()
-    if not text:
+    if not text or is_non_transaction(text):
         return None
     amount = _find_amount(text)
     if amount is None or amount <= 0:
@@ -113,11 +143,17 @@ def parse_message(text: str, today: date | None = None) -> Parsed | None:
     is_sms = bool(SMS_HINT.search(text)) or bool(DEBIT_WORDS.search(text) and len(text) > 60)
     kind = "credit" if CREDIT_WORDS.search(text) and not DEBIT_WORDS.search(text) else "debit"
     # SMS like "A/c debited ... ; X credited" mentions both - debit wins, which we already do.
+    body, split_with, split_ways = (text, [], None) if is_sms else _find_split(text)
+    merchant = _find_merchant(body, is_sms)
+    explicit_amount = bool(AMOUNT_RE.search(text))
     return Parsed(
         amount=amount,
         kind=kind,
-        merchant=_find_merchant(text, is_sms),
-        note=text if is_sms else text,
+        merchant=merchant,
+        note=text,
         date=_find_date(text, today),
         source="sms" if is_sms else "text",
+        confident=merchant != "Unknown" and (explicit_amount or not is_sms),
+        split_with=split_with,
+        split_ways=split_ways,
     )

@@ -1,5 +1,5 @@
 // Keeps the app shell available offline so it opens instantly from the home screen.
-const CACHE = "artha-v1";
+const CACHE = "artha-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icons/icon-192.png", "/icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
