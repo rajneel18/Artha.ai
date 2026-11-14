@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Artha Spending</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --bar:#3b82f6; --red:#dc2626; --green:#16a34a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#60a5fa; --bar:#3b82f6; --red:#f87171; --green:#4ade80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+  h1 { font-size: 22px; margin: 4px 0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:12px 0; }
+  .stats { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
+  .stat .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .stat .l { color:var(--muted); font-size: 13px; }
+  textarea { width:100%; min-height:80px; font:inherit; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
+  button, select, input { font:inherit; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); padding:6px 10px; }
+  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+  .hint { color:var(--muted); font-size: 13px; }
+  .bar { display:grid; grid-template-columns: 140px 1fr 90px; gap:8px; align-items:center; margin:6px 0; font-size:14px; }
+  .bar .track { background:var(--line); border-radius:4px; height:10px; overflow:hidden; }
+  .bar .fill { background:var(--bar); height:100%; }
+  .bar .amt { text-align:right; font-variant-numeric: tabular-nums; }
+  table { width:100%; border-collapse: collapse; font-size:14px; }
+  td, th { padding:8px 4px; border-bottom:1px solid var(--line); text-align:left; vertical-align: middle; }
+  td.amt { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
+  .credit { color:var(--green); }
+  .del { border:none; background:none; color:var(--muted); cursor:pointer; }
+  .msg { font-size:13px; margin-top:6px; }
+  @media (max-width: 560px) {
+    .stats { grid-template-columns: 1fr 1fr; }
+    .bar { grid-template-columns: 100px 1fr 72px; }
+    .hide-sm { display:none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Artha · Daily Spending</h1>
+    <input type="month" id="month">
+  </header>
+
+  <section class="card stats">
+    <div class="stat"><div class="l">Today</div><div class="v" id="s-today">₹0</div></div>
+    <div class="stat"><div class="l">This month</div><div class="v" id="s-spent">₹0</div></div>
+    <div class="stat"><div class="l">Received</div><div class="v credit" id="s-recv">₹0</div></div>
+  </section>
+
+  <section class="card">
+    <strong>Add spending</strong>
+    <textarea id="input" placeholder="250 swiggy dinner
+petrol 1500 yesterday
+Rs.499.00 debited from A/c XX1234 on 12-11-26 to VPA netflix@icici UPI Ref 123456"></textarea>
+    <div class="row">
+      <button class="primary" id="add">Add</button>
+      <label class="hint">or import bank CSV <input type="file" id="csv" accept=".csv"></label>
+      <a class="hint" href="#" id="export">Export CSV</a>
+    </div>
+    <div class="msg" id="msg"></div>
+  </section>
+
+  <section class="card">
+    <strong>By category</strong>
+    <div id="cats"></div>
+  </section>
+
+  <section class="card">
+    <strong>Transactions</strong>
+    <table><tbody id="tx"></tbody></table>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const inr = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+let CATS = [];
+
+function token() { try { return localStorage.getItem("artha_token") || ""; } catch { return ""; } }
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({ "X-Token": token() }, opts.headers || {});
+  const r = await fetch(path, opts);
+  if (r.status === 401) {
+    const t = prompt("Enter your ARTHA_TOKEN");
+    if (t) { try { localStorage.setItem("artha_token", t); } catch {} return api(path, opts); }
+  }
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+}
+
+async function load() {
+  const m = $("month").value;
+  const [s, tx] = await Promise.all([api(`/api/summary?month=${m}`), api(`/api/transactions?month=${m}`)]);
+  $("s-today").textContent = inr(s.today);
+  $("s-spent").textContent = inr(s.spent);
+  $("s-recv").textContent = inr(s.received);
+  const max = Math.max(1, ...s.by_category.map(c => c.total));
+  $("cats").innerHTML = s.by_category.length ? s.by_category.map(c => `
+    <div class="bar"><span>${c.category}</span>
+      <div class="track"><div class="fill" style="width:${(c.total / max * 100).toFixed(1)}%"></div></div>
+      <span class="amt">${inr(c.total)}</span></div>`).join("") : '<p class="hint">No spending yet this month.</p>';
+  $("tx").innerHTML = tx.map(t => `
+    <tr>
+      <td class="hide-sm">${t.date.slice(5)}</td>
+      <td>${esc(t.merchant)}</td>
+      <td><select data-id="${t.id}">${CATS.map(c => `<option ${c === t.category ? "selected" : ""}>${c}</option>`).join("")}</select></td>
+      <td class="amt ${t.kind === "credit" ? "credit" : ""}">${t.kind === "credit" ? "+" : ""}${inr(t.amount)}</td>
+      <td><button class="del" data-del="${t.id}" title="Delete">✕</button></td>
+    </tr>`).join("") || '<tr><td class="hint">Nothing here yet.</td></tr>';
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+$("add").onclick = async () => {
+  const text = $("input").value.trim();
+  if (!text) return;
+  try {
+    const r = await api("/api/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    $("msg").textContent = `Added ${r.added.length}` + (r.duplicates ? `, ${r.duplicates} duplicate` : "") +
+      (r.skipped.length ? `. Couldn't read: ${r.skipped.join(" | ")}` : "");
+    $("input").value = "";
+    load();
+  } catch (e) { $("msg").textContent = e.message; }
+};
+$("csv").onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const fd = new FormData(); fd.append("file", f);
+  try { const r = await api("/api/import/csv", { method: "POST", body: fd }); $("msg").textContent = `Imported ${r.added}, skipped ${r.skipped}`; load(); }
+  catch (err) { $("msg").textContent = err.message; }
+  e.target.value = "";
+};
+$("export").onclick = (e) => { e.preventDefault(); location.href = "/api/export.csv?token=" + encodeURIComponent(token()); };
+$("tx").addEventListener("change", async (e) => {
+  const id = e.target.dataset.id; if (!id) return;
+  await api(`/api/transactions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category: e.target.value }) });
+  load();
+});
+$("tx").addEventListener("click", async (e) => {
+  const id = e.target.dataset.del; if (!id || !confirm("Delete this transaction?")) return;
+  await api(`/api/transactions/${id}`, { method: "DELETE" }); load();
+});
+$("month").onchange = load;
+
+(async () => {
+  $("month").value = new Date().toISOString().slice(0, 7);
+  CATS = await api("/api/categories");
+  load();
+})();
+</script>
+</body>
+</html>
