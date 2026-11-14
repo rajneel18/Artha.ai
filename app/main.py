@@ -20,6 +20,12 @@ from .parser import parse_message
 STATIC = Path(__file__).parent / "static"
 
 
+def today() -> date:
+    """'Today' in the user's timezone (default India), not the server's - hosts usually run on UTC."""
+    from zoneinfo import ZoneInfo
+    return datetime.now(ZoneInfo(os.environ.get("ARTHA_TZ", "Asia/Kolkata"))).date()
+
+
 @asynccontextmanager
 async def lifespan(_app):
     db.init_db(db.DB_PATH)
@@ -74,7 +80,7 @@ def ingest_text(text: str, source_override: str | None = None) -> dict:
     added, skipped, duplicates = [], [], 0
     with db.connect() as conn:
         for msg in _split_messages(text):
-            p = parse_message(msg)
+            p = parse_message(msg, today=today())
             if not p:
                 skipped.append(msg)
                 continue
@@ -113,8 +119,28 @@ class TxPatch(BaseModel):
 
 
 @app.get("/")
+@app.get("/share")  # Android share target: Share an SMS -> Artha lands here with ?text=...
 def index():
-    return FileResponse(STATIC / "index.html")
+    return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(STATIC / "manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/sw.js")
+def service_worker():
+    # Served from the root so the worker controls the whole app.
+    return FileResponse(STATIC / "sw.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/icons/{name}")
+def icons(name: str):
+    path = (STATIC / "icons" / name).resolve()
+    if path.parent != (STATIC / "icons").resolve() or not path.is_file():
+        raise HTTPException(404)
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=604800"})
 
 
 @app.get("/api/categories")
@@ -157,7 +183,7 @@ async def sms_webhook(request: Request):
 @app.post("/api/transactions", dependencies=[Depends(require_token)])
 def add_tx(tx: TxIn):
     with db.connect() as conn:
-        return _insert(conn, d=tx.date or date.today(), amount=tx.amount, kind=tx.kind,
+        return _insert(conn, d=tx.date or today(), amount=tx.amount, kind=tx.kind,
                        merchant=tx.merchant, note=tx.note or tx.merchant, source="manual",
                        category=tx.category)
 
@@ -209,7 +235,7 @@ def delete_tx(tx_id: int):
 
 @app.get("/api/summary", dependencies=[Depends(require_token)])
 def summary(month: str | None = None):
-    month = month or date.today().strftime("%Y-%m")
+    month = month or today().strftime("%Y-%m")
     with db.connect() as conn:
         by_cat = [_row(r) for r in conn.execute(
             "SELECT category, ROUND(SUM(amount),2) AS total, COUNT(*) AS count FROM transactions "
@@ -222,7 +248,7 @@ def summary(month: str | None = None):
         income = conn.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE kind='credit' "
                               "AND substr(date,1,7)=?", (month,)).fetchone()[0]
         today_total = conn.execute("SELECT COALESCE(SUM(amount),0) FROM transactions WHERE kind='debit' "
-                                   "AND date=?", (date.today().isoformat(),)).fetchone()[0]
+                                   "AND date=?", (today().isoformat(),)).fetchone()[0]
     return {"month": month, "spent": round(spent, 2), "received": round(income, 2),
             "today": round(today_total, 2), "by_category": by_cat, "by_day": by_day}
 
@@ -277,7 +303,7 @@ async def import_csv(file: UploadFile = File(...)):
             if not d or not amount:
                 skipped += 1
                 continue
-            p = parse_message(desc) if desc else None
+            p = parse_message(desc, today=today()) if desc else None
             merchant = p.merchant if p and p.merchant != "Unknown" else (desc[:40] or "Unknown")
             raw = f"csv|{d}|{amount}|{desc}"
             if _insert(conn, d=d, amount=amount, kind=kind, merchant=merchant, note=desc,

@@ -78,3 +78,12 @@ def test_csv_import(client):
     csv_data = "Date,Narration,Withdrawal Amt,Deposit Amt\n10/11/2026,UPI-BLINKIT-123,320.00,\n11/11/2026,SALARY,,50000\n"
     r = client.post("/api/import/csv", files={"file": ("s.csv", csv_data, "text/csv")}).json()
     assert r["added"] == 2
+
+
+def test_pwa_routes(client):
+    assert client.get("/share?text=hi").status_code == 200
+    m = client.get("/manifest.webmanifest")
+    assert m.status_code == 200 and m.json()["share_target"]["action"] == "/share"
+    assert "javascript" in client.get("/sw.js").headers["content-type"]
+    assert client.get("/icons/icon-192.png").status_code == 200
+    assert client.get("/icons/..%2Fmain.py").status_code == 404

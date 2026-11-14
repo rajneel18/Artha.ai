@@ -2,153 +2,254 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Artha Spending</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<title>Artha</title>
 <style>
-  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --bar:#3b82f6; --red:#dc2626; --green:#16a34a; }
+  :root { --bg:#f6f7f9; --card:#fff; --text:#1b1f24; --muted:#6b7280; --line:#e5e7eb; --accent:#2563eb; --accent-text:#fff; --chip:#eef2ff; --chip-text:#3730a3; --green:#15803d; --red:#dc2626; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#60a5fa; --bar:#3b82f6; --red:#f87171; --green:#4ade80; }
+    :root { --bg:#0f1115; --card:#181b21; --text:#e8eaed; --muted:#9aa0a6; --line:#2a2e36; --accent:#3b82f6; --accent-text:#fff; --chip:#1e2540; --chip-text:#c7d2fe; --green:#4ade80; --red:#f87171; }
   }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--text); }
-  main { max-width: 860px; margin: 0 auto; padding: 16px; }
-  header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
-  h1 { font-size: 22px; margin: 4px 0; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin:12px 0; }
-  .stats { display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; }
-  .stat .v { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { background: var(--bg); }
+  body { margin:0; font: 16px/1.4 Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--text);
+         padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+         overscroll-behavior-y: contain; }
+  main { max-width: 640px; margin: 0 auto; padding: 0 16px 96px; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); display:flex; align-items:center; justify-content:space-between; gap:8px; padding: 10px 0; }
+  h1 { font-size: 20px; margin: 0; font-weight: 700; }
+  .monthnav { display:flex; align-items:center; gap:2px; }
+  .monthnav span { min-width: 92px; text-align:center; font-weight:600; font-size:15px; }
+  .icon-btn { width:44px; height:44px; border:none; border-radius:22px; background:transparent; color:var(--text); font-size:22px; cursor:pointer; }
+  .icon-btn:active { background: var(--line); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px; margin:12px 0; }
+  .stats { display:grid; grid-template-columns: repeat(3, 1fr); gap:8px; padding: 14px 12px; }
+  .stat .v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow:hidden; text-overflow: ellipsis; }
   .stat .l { color:var(--muted); font-size: 13px; }
-  textarea { width:100%; min-height:80px; font:inherit; padding:10px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--text); }
-  button, select, input { font:inherit; border-radius:8px; border:1px solid var(--line); background:var(--card); color:var(--text); padding:6px 10px; }
-  button.primary { background:var(--accent); color:#fff; border-color:var(--accent); cursor:pointer; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
-  .hint { color:var(--muted); font-size: 13px; }
-  .bar { display:grid; grid-template-columns: 140px 1fr 90px; gap:8px; align-items:center; margin:6px 0; font-size:14px; }
-  .bar .track { background:var(--line); border-radius:4px; height:10px; overflow:hidden; }
-  .bar .fill { background:var(--bar); height:100%; }
+  h2 { font-size: 15px; margin: 0 0 10px; font-weight: 600; }
+  textarea { width:100%; min-height:72px; font: inherit; font-size:16px; padding:12px; border-radius:12px; border:1px solid var(--line); background:var(--bg); color:var(--text); resize: vertical; }
+  textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .actions { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:10px; }
+  .btn { min-height:48px; font: inherit; font-weight:600; border-radius:12px; border:1px solid var(--line); background:var(--card); color:var(--text); cursor:pointer; padding: 0 12px; }
+  .btn.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-text); }
+  .btn:active { filter: brightness(0.92); }
+  .links { display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; font-size:14px; }
+  .links a, .links label { color: var(--accent); text-decoration:none; cursor:pointer; min-height:32px; display:inline-flex; align-items:center; }
+  .bar { display:grid; grid-template-columns: 112px 1fr 76px; gap:8px; align-items:center; margin:10px 0; font-size:14px; }
+  .bar .name { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .track { background:var(--line); border-radius:4px; height:10px; overflow:hidden; }
+  .fill { background:var(--accent); height:100%; border-radius:4px; }
   .bar .amt { text-align:right; font-variant-numeric: tabular-nums; }
-  table { width:100%; border-collapse: collapse; font-size:14px; }
-  td, th { padding:8px 4px; border-bottom:1px solid var(--line); text-align:left; vertical-align: middle; }
-  td.amt { text-align:right; font-variant-numeric: tabular-nums; white-space:nowrap; }
-  .credit { color:var(--green); }
-  .del { border:none; background:none; color:var(--muted); cursor:pointer; }
-  .msg { font-size:13px; margin-top:6px; }
-  @media (max-width: 560px) {
-    .stats { grid-template-columns: 1fr 1fr; }
-    .bar { grid-template-columns: 100px 1fr 72px; }
-    .hide-sm { display:none; }
-  }
+  .day { display:flex; justify-content:space-between; color:var(--muted); font-size:13px; font-weight:600; padding: 14px 2px 4px; border-bottom: 1px solid var(--line); }
+  .tx { display:grid; grid-template-columns: 1fr auto 44px; align-items:center; gap:4px; padding: 8px 0 8px 2px; border-bottom: 1px solid var(--line); }
+  .tx .m { font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .chip { position:relative; display:inline-flex; align-items:center; margin-top:4px; padding: 4px 10px; min-height:32px; border-radius:16px; background:var(--chip); color:var(--chip-text); font-size:13px; font-weight:500; }
+  .chip select { position:absolute; inset:0; opacity:0; width:100%; height:100%; font-size:16px; cursor:pointer; }
+  .tx .a { font-weight:600; font-variant-numeric: tabular-nums; white-space:nowrap; padding-left:8px; }
+  .credit { color: var(--green); }
+  .del { width:44px; height:44px; border:none; background:none; color:var(--muted); font-size:18px; cursor:pointer; border-radius:22px; }
+  .hint { color:var(--muted); font-size:14px; }
+  .toast { position: fixed; left: 50%; bottom: calc(16px + env(safe-area-inset-bottom)); transform: translateX(-50%) translateY(150%);
+           width: min(calc(100% - 32px), 600px); background:#1f2937; color:#fff; border-radius:12px; padding: 12px 8px 12px 16px;
+           display:flex; align-items:center; gap:8px; transition: transform .2s ease, visibility .2s; visibility: hidden; z-index: 10; font-size:15px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+  .toast.show { transform: translateX(-50%) translateY(0); visibility: visible; }
+  .toast span { flex:1; }
+  .toast button { background:none; border:none; color:#93c5fd; font: inherit; font-weight:700; min-height:40px; padding:0 12px; cursor:pointer; }
+  #install { display:none; }
 </style>
 </head>
 <body>
 <main>
   <header>
-    <h1>Artha · Daily Spending</h1>
-    <input type="month" id="month">
+    <h1>Artha</h1>
+    <div class="monthnav">
+      <button class="icon-btn" id="prev" aria-label="Previous month">‹</button>
+      <span id="monthLabel"></span>
+      <button class="icon-btn" id="next" aria-label="Next month">›</button>
+    </div>
   </header>
 
   <section class="card stats">
     <div class="stat"><div class="l">Today</div><div class="v" id="s-today">₹0</div></div>
-    <div class="stat"><div class="l">This month</div><div class="v" id="s-spent">₹0</div></div>
+    <div class="stat"><div class="l">Month</div><div class="v" id="s-spent">₹0</div></div>
     <div class="stat"><div class="l">Received</div><div class="v credit" id="s-recv">₹0</div></div>
   </section>
 
   <section class="card">
-    <strong>Add spending</strong>
-    <textarea id="input" placeholder="250 swiggy dinner
-petrol 1500 yesterday
-Rs.499.00 debited from A/c XX1234 on 12-11-26 to VPA netflix@icici UPI Ref 123456"></textarea>
-    <div class="row">
-      <button class="primary" id="add">Add</button>
-      <label class="hint">or import bank CSV <input type="file" id="csv" accept=".csv"></label>
-      <a class="hint" href="#" id="export">Export CSV</a>
+    <h2>Add spending</h2>
+    <textarea id="input" enterkeyhint="done" autocomplete="off" placeholder="250 swiggy dinner&#10;petrol 1500 yesterday&#10;…or paste a bank SMS"></textarea>
+    <div class="actions">
+      <button class="btn" id="paste">Paste SMS</button>
+      <button class="btn primary" id="add">Add</button>
     </div>
-    <div class="msg" id="msg"></div>
+    <div class="links">
+      <label>Import bank CSV<input type="file" id="csv" accept=".csv,text/csv" hidden></label>
+      <a href="#" id="export">Export CSV</a>
+      <a href="#" id="install">Install app</a>
+    </div>
   </section>
 
   <section class="card">
-    <strong>By category</strong>
+    <h2>By category</h2>
     <div id="cats"></div>
   </section>
 
   <section class="card">
-    <strong>Transactions</strong>
-    <table><tbody id="tx"></tbody></table>
+    <h2>Transactions</h2>
+    <div id="tx"></div>
   </section>
 </main>
+<div class="toast" id="toast" role="status"><span id="toastMsg"></span><button id="toastBtn" hidden>Undo</button></div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 const inr = (n) => "₹" + Number(n).toLocaleString("en-IN", { maximumFractionDigits: 2 });
-let CATS = [];
+const pad = (n) => String(n).padStart(2, "0");
+const localDate = (d = new Date()) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+let CATS = [], month = localDate().slice(0, 7);
 
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
 function token() { try { return localStorage.getItem("artha_token") || ""; } catch { return ""; } }
-async function api(path, opts = {}) {
-  opts.headers = Object.assign({ "X-Token": token() }, opts.headers || {});
-  const r = await fetch(path, opts);
-  if (r.status === 401) {
+
+async function api(path, opts = {}, retried = false) {
+  const headers = Object.assign({ "X-Token": token() }, opts.headers || {});
+  const r = await fetch(path, { ...opts, headers });
+  if (r.status === 401 && !retried) {
     const t = prompt("Enter your ARTHA_TOKEN");
-    if (t) { try { localStorage.setItem("artha_token", t); } catch {} return api(path, opts); }
+    if (t) { try { localStorage.setItem("artha_token", t.trim()); } catch {} return api(path, opts, true); }
   }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 }
 
+let toastTimer;
+function toast(msg, undo) {
+  $("toastMsg").textContent = msg;
+  $("toastBtn").hidden = !undo;
+  $("toastBtn").onclick = async () => { $("toast").classList.remove("show"); await undo(); load(); };
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("show"), undo ? 6000 : 3500);
+}
+
+function dayLabel(iso) {
+  const today = localDate(), y = new Date(); y.setDate(y.getDate() - 1);
+  if (iso === today) return "Today";
+  if (iso === localDate(y)) return "Yesterday";
+  const [Y, M, D] = iso.split("-").map(Number);
+  return new Date(Y, M - 1, D).toLocaleDateString("en-IN", { weekday: "short", day: "numeric", month: "short" });
+}
+
 async function load() {
-  const m = $("month").value;
-  const [s, tx] = await Promise.all([api(`/api/summary?month=${m}`), api(`/api/transactions?month=${m}`)]);
+  const [Y, M] = month.split("-").map(Number);
+  $("monthLabel").textContent = new Date(Y, M - 1, 1).toLocaleDateString("en-IN", { month: "short", year: "numeric" });
+  $("next").disabled = month >= localDate().slice(0, 7);
+  $("next").style.opacity = $("next").disabled ? 0.3 : 1;
+  let s, tx;
+  try {
+    [s, tx] = await Promise.all([api(`/api/summary?month=${month}`), api(`/api/transactions?month=${month}`)]);
+  } catch (e) { toast(navigator.onLine ? e.message : "You're offline"); return; }
   $("s-today").textContent = inr(s.today);
   $("s-spent").textContent = inr(s.spent);
   $("s-recv").textContent = inr(s.received);
   const max = Math.max(1, ...s.by_category.map(c => c.total));
   $("cats").innerHTML = s.by_category.length ? s.by_category.map(c => `
-    <div class="bar"><span>${c.category}</span>
+    <div class="bar"><span class="name">${esc(c.category)}</span>
       <div class="track"><div class="fill" style="width:${(c.total / max * 100).toFixed(1)}%"></div></div>
       <span class="amt">${inr(c.total)}</span></div>`).join("") : '<p class="hint">No spending yet this month.</p>';
-  $("tx").innerHTML = tx.map(t => `
-    <tr>
-      <td class="hide-sm">${t.date.slice(5)}</td>
-      <td>${esc(t.merchant)}</td>
-      <td><select data-id="${t.id}">${CATS.map(c => `<option ${c === t.category ? "selected" : ""}>${c}</option>`).join("")}</select></td>
-      <td class="amt ${t.kind === "credit" ? "credit" : ""}">${t.kind === "credit" ? "+" : ""}${inr(t.amount)}</td>
-      <td><button class="del" data-del="${t.id}" title="Delete">✕</button></td>
-    </tr>`).join("") || '<tr><td class="hint">Nothing here yet.</td></tr>';
-}
-function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
 
-$("add").onclick = async () => {
-  const text = $("input").value.trim();
+  const days = {};
+  tx.forEach(t => (days[t.date] ||= []).push(t));
+  $("tx").innerHTML = Object.keys(days).sort().reverse().map(d => {
+    const total = days[d].filter(t => t.kind === "debit").reduce((a, t) => a + t.amount, 0);
+    return `<div class="day"><span>${dayLabel(d)}</span><span>${inr(total)}</span></div>` + days[d].map(t => `
+      <div class="tx">
+        <div><div class="m">${esc(t.merchant)}</div>
+          <label class="chip">${esc(t.category)} ▾
+            <select data-id="${t.id}" aria-label="Category for ${esc(t.merchant)}">${CATS.map(c => `<option ${c === t.category ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>
+          </label></div>
+        <div class="a ${t.kind === "credit" ? "credit" : ""}">${t.kind === "credit" ? "+" : ""}${inr(t.amount)}</div>
+        <button class="del" data-del="${t.id}" aria-label="Delete">✕</button>
+      </div>`).join("");
+  }).join("") || '<p class="hint">Nothing here yet.</p>';
+}
+
+async function addText(text) {
+  text = (text || "").trim();
   if (!text) return;
   try {
     const r = await api("/api/ingest", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
-    $("msg").textContent = `Added ${r.added.length}` + (r.duplicates ? `, ${r.duplicates} duplicate` : "") +
-      (r.skipped.length ? `. Couldn't read: ${r.skipped.join(" | ")}` : "");
-    $("input").value = "";
+    const ids = r.added.map(t => t.id);
+    let msg = r.added.length === 1 ? `${inr(r.added[0].amount)} · ${r.added[0].category}` : `Added ${r.added.length}`;
+    if (r.duplicates) msg = r.added.length ? `${msg}, ${r.duplicates} already saved` : "Already saved";
+    if (!r.added.length && !r.duplicates) msg = "Couldn't find an amount in that";
+    else $("input").value = "";
+    toast(msg, ids.length ? () => Promise.all(ids.map(id => api(`/api/transactions/${id}`, { method: "DELETE" }))) : null);
+    if (r.skipped.length && r.added.length) $("input").value = r.skipped.join("\n");
+    if (r.added.length) { month = r.added[0].date.slice(0, 7); }
     load();
-  } catch (e) { $("msg").textContent = e.message; }
+  } catch (e) { toast(e.message); }
+}
+
+$("add").onclick = () => addText($("input").value);
+$("paste").onclick = async () => {
+  try {
+    const t = await navigator.clipboard.readText();
+    if (!t.trim()) return toast("Clipboard is empty");
+    $("input").value = t;
+    addText(t);
+  } catch { $("input").focus(); toast("Long-press the box and tap Paste"); }
 };
 $("csv").onchange = async (e) => {
   const f = e.target.files[0]; if (!f) return;
   const fd = new FormData(); fd.append("file", f);
-  try { const r = await api("/api/import/csv", { method: "POST", body: fd }); $("msg").textContent = `Imported ${r.added}, skipped ${r.skipped}`; load(); }
-  catch (err) { $("msg").textContent = err.message; }
+  try { const r = await api("/api/import/csv", { method: "POST", body: fd }); toast(`Imported ${r.added}, skipped ${r.skipped}`); load(); }
+  catch (err) { toast(err.message); }
   e.target.value = "";
 };
 $("export").onclick = (e) => { e.preventDefault(); location.href = "/api/export.csv?token=" + encodeURIComponent(token()); };
 $("tx").addEventListener("change", async (e) => {
   const id = e.target.dataset.id; if (!id) return;
-  await api(`/api/transactions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category: e.target.value }) });
+  try {
+    await api(`/api/transactions/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ category: e.target.value }) });
+    toast(`Got it, I'll use ${e.target.value} for this merchant from now on`);
+  } catch (err) { toast(err.message); }
   load();
 });
 $("tx").addEventListener("click", async (e) => {
-  const id = e.target.dataset.del; if (!id || !confirm("Delete this transaction?")) return;
-  await api(`/api/transactions/${id}`, { method: "DELETE" }); load();
+  const id = e.target.dataset.del; if (!id) return;
+  const row = await api(`/api/transactions?month=${month}`).then(l => l.find(t => String(t.id) === id));
+  await api(`/api/transactions/${id}`, { method: "DELETE" });
+  load();
+  if (row) toast(`Deleted ${row.merchant}`, () => api("/api/transactions", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ amount: row.amount, merchant: row.merchant, category: row.category, kind: row.kind, date: row.date, note: row.note || "" }) }));
 });
-$("month").onchange = load;
+function shiftMonth(n) {
+  const [Y, M] = month.split("-").map(Number); const d = new Date(Y, M - 1 + n, 1);
+  month = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`; load();
+}
+$("prev").onclick = () => shiftMonth(-1);
+$("next").onclick = () => shiftMonth(1);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) load(); });
+
+// Install as an app (Chrome on Android shows this when the site is served over HTTPS).
+let installEvt;
+addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); installEvt = e; $("install").style.display = "inline-flex"; });
+$("install").onclick = async (e) => { e.preventDefault(); if (installEvt) { installEvt.prompt(); installEvt = null; $("install").style.display = "none"; } };
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 (async () => {
-  $("month").value = new Date().toISOString().slice(0, 7);
-  CATS = await api("/api/categories");
-  load();
+  try { CATS = await api("/api/categories"); } catch {}
+  const q = new URLSearchParams(location.search);
+  const shared = [q.get("text"), q.get("title")].find(v => v && v.trim());
+  if (location.pathname === "/share" || q.has("add")) history.replaceState(null, "", "/");
+  if (shared) { $("input").value = shared; await addText(shared); }
+  else { if (q.has("add")) $("input").focus(); load(); }
 })();
 </script>
 </body>
