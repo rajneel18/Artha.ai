@@ -203,7 +203,8 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         var reason: String? = null
         var dup: Long? = null
         if (kind == "debit") {
-            dup = if (source != "manual" || raw != null) findDuplicate(d, amt, m) else null
+            // Bank SMS carry unique references, so repeats there are real payments; only typed entries can double up.
+            dup = if (source == "text") findDuplicate(d, amt, m) else null
             val sub = db.one("SELECT status FROM subscriptions WHERE merchant_key=?", Categorizer.merchantKey(m))
             reason = when {
                 dup != null -> "duplicate"
@@ -626,22 +627,55 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         return true
     }
 
-    fun detected(): Map<String, Any?> = mapOf(
-        "pending" to pendingCount(),
-        "items" to db.query("SELECT * FROM detected WHERE status='analyzed' ORDER BY received_at DESC, id DESC LIMIT 300"),
-        "skipped" to db.query("SELECT * FROM detected WHERE status='skipped' ORDER BY received_at DESC, id DESC LIMIT 100"),
-    )
+    /**
+     * New SMS are listed one by one. Imported history (past SMS, statements) can be hundreds of rows,
+     * so it's grouped by payee: you choose one category per payee and log the whole group at once.
+     */
+    fun detected(): Map<String, Any?> {
+        val groups = db.query(
+            "SELECT party, type, COUNT(*) AS count, ROUND(SUM(amount),2) AS total, MIN(received_at) AS first, MAX(received_at) AS last, " +
+                "SUM(CASE WHEN confident=1 THEN 0 ELSE 1 END) AS unsure, " +
+                "(SELECT d2.category FROM detected d2 WHERE d2.status='analyzed' AND d2.source IN ('history','import') AND lower(d2.party)=lower(d.party) " +
+                " AND d2.type=d.type GROUP BY d2.category ORDER BY COUNT(*) DESC LIMIT 1) AS category " +
+                "FROM detected d WHERE status='analyzed' AND source IN ('history','import') GROUP BY lower(party), type ORDER BY total DESC")
+        return mapOf(
+            "pending" to pendingCount(),
+            "pending_history" to db.count("SELECT COUNT(*) FROM detected WHERE status='pending' AND source IN ('history','import')"),
+            "items" to db.query("SELECT * FROM detected WHERE status='analyzed' AND source='sms' ORDER BY received_at DESC, id DESC LIMIT 200"),
+            "groups" to groups,
+            "history_count" to groups.sumOf { it.l("count") ?: 0L },
+            "skipped" to db.query("SELECT * FROM detected WHERE status='skipped' ORDER BY received_at DESC, id DESC LIMIT 100"),
+        )
+    }
+
+    /** Log or skip every imported item for one payee, optionally setting the category for all of them. */
+    fun actOnGroup(party: String, type: String, action: String, category: String?): Int {
+        val ids = db.query("SELECT id FROM detected WHERE status='analyzed' AND source IN ('history','import') AND lower(party)=lower(?) AND type=?", party, type)
+            .mapNotNull { it.l("id") }
+        return db.transaction {
+            var n = 0
+            for (id in ids) {
+                if (action == "skip") skipDetected(id) else try { logDetected(id, if (category != null) mapOf("category" to category) else emptyMap()); n++ } catch (_: ApiError) {}
+            }
+            // Teach the AI: future SMS to this payee get this category.
+            if (category != null && action != "skip") Categorizer.merchantKey(party).takeIf { it.isNotEmpty() && it != "unknown" }?.let {
+                db.exec("INSERT INTO merchant_rules(merchant, category) VALUES(?,?) ON CONFLICT(merchant) DO UPDATE SET category=excluded.category", it, category)
+            }
+            if (action == "skip") ids.size else n
+        }
+    }
 
     /** Logs one detected item (with any edits you made). Upcoming payments go to subscriptions, not spending. */
     fun logDetected(id: Long, edits: Map<String, Any?>): Map<String, Any?>? {
-        val r = db.one("SELECT * FROM detected WHERE id=? AND status IN ('analyzed','skipped')", id) ?: throw ApiError(404, "Not found")
+        val r = db.one("SELECT * FROM detected WHERE id=? AND status IN ('analyzed','skipped','logged')", id) ?: throw ApiError(404, "Not found")
+        if (r.s("status") == "logged") return r.l("tx_id")?.let { row(it) } ?: mapOf("subscription" to r.s("party")) // already done
         val type = (edits["type"] as? String) ?: r.s("type")?.takeIf { it != "ignore" } ?: "debit"
         val amount = (edits["amount"] as? Number)?.toDouble() ?: r.d("amount")?.takeIf { it > 0 } ?: throw ApiError(400, "Enter the amount first")
         val party = (edits["party"] as? String)?.takeIf { it.isNotBlank() } ?: r.s("party") ?: "Unknown"
         val cat = (edits["category"] as? String) ?: r.s("category") ?: "Other"
         val received = java.time.LocalDateTime.parse(r.s("received_at")).toLocalDate()
         // SMS dates come from the phone's own timestamp; statement rows use the date the AI read from the row.
-        val d = if (r.s("source") == "import") r.s("date")?.let { try { clampDate(LocalDate.parse(it)) } catch (_: Exception) { null } } ?: received else received
+        val d = if (r.s("source") == "import" && !r.s("header").isNullOrBlank()) r.s("date")?.let { try { clampDate(LocalDate.parse(it)) } catch (_: Exception) { null } } ?: received else received
         if (type == "upcoming") {
             val key = Categorizer.merchantKey(party)
             val next = r.s("date")?.let { try { LocalDate.parse(it) } catch (_: Exception) { null } } ?: received
@@ -653,7 +687,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         }
         val split = r.s("split_with")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
         val tx = record(d, amount, if (type == "credit") "credit" else "debit", party, r.s("body") ?: party,
-            if (r.s("source") == "import") "import" else "sms", cat.takeIf { it in allCategories() }, raw = null,
+            r.s("source") ?: "sms", cat.takeIf { it in allCategories() }, raw = null,
             splitWith = split, splitWays = r.l("split_ways")?.toInt(), confident = true)
         if (edits["category"] != null && tx != null) setCategory(tx["id"] as Long, cat) // remember your correction
         db.exec("UPDATE detected SET status='logged', tx_id=? WHERE id=?", tx?.get("id"), id)
@@ -664,9 +698,26 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
 
     fun logAllDetected(): Int {
         val ids = db.query("SELECT id FROM detected WHERE status='analyzed' ORDER BY received_at, id").mapNotNull { it.l("id") }
-        var n = 0
-        for (id in ids) try { logDetected(id, emptyMap()); n++ } catch (_: ApiError) {}
-        return n
+        return db.transaction {
+            var n = 0
+            for (id in ids) try { logDetected(id, emptyMap()); n++ } catch (_: ApiError) {}
+            n
+        }
+    }
+
+    /** Answer to "What was it for?": the AI turns your words into a category; the payment is logged (or re-categorized). */
+    fun logWithPurpose(id: Long, purpose: String, ex: Extractor): Map<String, Any?>? {
+        val r = db.one("SELECT * FROM detected WHERE id=?", id) ?: throw ApiError(404, "Not found")
+        val cat = ex.categoryFor(purpose, r.s("party") ?: "", allCategories()) ?: r.s("category") ?: "Other"
+        val note = "${purpose.trim().take(120)} (${r.s("party")})"
+        return if (r.s("status") == "logged" && r.l("tx_id") != null) {
+            val txId = r.l("tx_id")!!
+            setCategory(txId, cat); db.exec("UPDATE transactions SET note=? WHERE id=?", note, txId); row(txId)
+        } else {
+            val tx = logDetected(id, mapOf("category" to cat))
+            (tx?.get("id") as? Long)?.let { db.exec("UPDATE transactions SET note=? WHERE id=?", note, it) }
+            tx?.let { row(it["id"] as Long) }
+        }
     }
 
     /** Replaces everything with a backup made by "Full backup" (export.json). Unknown tables/columns are ignored. */

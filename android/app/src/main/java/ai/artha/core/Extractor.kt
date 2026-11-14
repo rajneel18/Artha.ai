@@ -180,6 +180,20 @@ JSON:""".trimIndent()
         return Verdict(item, null)
     }
 
+    /** "lunch with team" + payee -> one of your categories. */
+    fun categoryFor(purpose: String, party: String, categories: List<String>): String? {
+        val prompt = """
+Pick the spending category for a payment. Reply with only one JSON object: {"category": "..."}
+category must be exactly one of: ${categories.joinToString(", ")}
+Example: paid to Rohan, purpose "dinner" -> {"category": "Food & Dining"}
+Example: paid to Shell, purpose "petrol" -> {"category": "Fuel"}
+Paid to: $party
+Purpose: $purpose
+JSON:""".trimIndent()
+        val c = ask(prompt)?.get("category") as? String ?: return null
+        return categories.firstOrNull { it.equals(c.trim(), true) }
+    }
+
     fun plan(question: String, categories: List<String>, today: LocalDate): Map<String, Any?>? {
         val p = ask(questionPrompt(question, categories, today)) ?: return null
         fun s(k: String) = (p[k] as? String)?.trim()?.takeIf { it.isNotEmpty() }

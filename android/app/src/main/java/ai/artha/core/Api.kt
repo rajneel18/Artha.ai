@@ -44,11 +44,18 @@ class Api(val engine: Engine, val model: LocalModel) {
             // ---- detected by the on-device AI, waiting for your OK ----
             m == "GET" && p == listOf("detected") -> engine.detected()
             m == "POST" && p == listOf("detected", "log-all") -> mapOf("logged" to engine.logAllDetected())
+            m == "POST" && p == listOf("detected", "group") -> {
+                val action = b.str("action") ?: "log"
+                if (action !in setOf("log", "skip")) throw ApiError(400, "Unknown action")
+                checkCategory(b.str("category"))
+                mapOf("count" to engine.actOnGroup(b.str("party") ?: throw ApiError(400, "Which payee?"), b.str("type") ?: "debit", action, b.str("category")))
+            }
             m == "POST" && p.size == 2 && p[0] == "detected" -> {
                 val id = id(p[1])
                 when (b.str("action")) {
                     "log" -> { checkCategory(b.str("category")); engine.logDetected(id, b) }
                     "skip" -> { engine.skipDetected(id); mapOf("ok" to true) }
+                    "purpose" -> engine.logWithPurpose(id, b.str("purpose") ?: throw ApiError(400, "What was it for?"), extractor)
                     else -> throw ApiError(400, "Unknown action")
                 }
             }
@@ -158,7 +165,8 @@ class Api(val engine: Engine, val model: LocalModel) {
     }
 
     /** Background capture from a bank SMS: queue it for the AI. Returns true if it was new. */
-    fun captureSms(body: String, sender: String?, at: java.time.LocalDateTime): Boolean = engine.enqueue(body, "sms", at, sender)
+    fun captureSms(body: String, sender: String?, at: java.time.LocalDateTime, history: Boolean = false): Boolean =
+        engine.enqueue(body, if (history) "history" else "sms", at, sender)
 
     private fun addTx(b: Map<String, Any?>): Any? {
         val amount = b.dbl("amount") ?: 0.0

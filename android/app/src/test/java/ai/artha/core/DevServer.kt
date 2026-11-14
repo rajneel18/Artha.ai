@@ -29,6 +29,14 @@ class DevServer {
             "Rs.640 debited from a/c XX6196 to ramesh UPI Ref 77",
             "482913 is your OTP for transaction of Rs.2,000.00 at AMAZON - Saraswat Bank",
         ).forEachIndexed { i, sms -> a.captureSms(sms, "AX-SARBNK", now.minusHours(i.toLong())) }
+        run {
+            model.answers["swiggy"] = """{"type": "debit", "amount": 250, "party": "Swiggy", "category": "Food & Dining"}"""
+            model.answers["blinkit"] = """{"type": "debit", "amount": 430, "party": "Blinkit", "category": "Groceries"}"""
+            model.answers["kirana"] = """{"type": "debit", "amount": 120, "party": "Ramesh Kirana", "category": "Other", "confidence": "low"}"""
+        }
+        for (i in 1..14) a.captureSms("Rs.250 paid to swiggy Ref $i", "AX-HDFCBK", now.minusDays(i * 2L), history = true)
+        for (i in 1..9) a.captureSms("Rs.430 paid to blinkit Ref $i", "AX-HDFCBK", now.minusDays(i * 3L), history = true)
+        for (i in 1..6) a.captureSms("Rs.120 paid to kirana Ref $i", "AX-HDFCBK", now.minusDays(i * 4L), history = true)
         while (a.engine.analyzeNext(a.extractor)) {}
         a.handle("PUT", "/api/settings", toJson(mapOf("daily_allowance" to 800, "budget_start" to java.time.LocalDate.now().minusDays(5).toString())).toString())
         listOf(250 to "Swiggy", 180 to "Uber", 420 to "Blinkit").forEach { (amt, m) ->

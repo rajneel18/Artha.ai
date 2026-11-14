@@ -42,6 +42,27 @@
   .banner { display:flex; align-items:center; gap:10px; font-size:14px; color: var(--muted); }
   .spin { width:16px; height:16px; border:2px solid var(--line); border-top-color: var(--accent); border-radius:50%; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
+  .pick { display:inline-flex; align-items:center; justify-content:space-between; gap:6px; min-height:36px; padding: 0 10px 0 12px; border-radius:18px;
+          border:1px solid var(--line); background: var(--chip); color: var(--chip-text); font: inherit; font-size:13px; font-weight:500; cursor:pointer; max-width:100%; }
+  .pick.field { width:100%; min-height:48px; border-radius:12px; font-size:16px; background: var(--bg); color: var(--text); padding: 0 12px; }
+  .pick svg { width:16px; height:16px; stroke:currentColor; fill:none; stroke-width:2; flex:none; }
+  .pick span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .picker-bg { position: fixed; inset: 0; background: rgba(29,25,19,.45); z-index: 40; display:none; }
+  .picker { position: fixed; left:0; right:0; bottom:0; z-index: 41; background: var(--card); border-radius: 20px 20px 0 0; box-shadow: var(--sheet-shadow);
+            max-height: 80vh; overflow-y:auto; padding: 8px 16px calc(20px + env(safe-area-inset-bottom)); transform: translateY(100%); transition: transform .2s ease;
+            visibility:hidden; max-width:640px; margin:0 auto; }
+  .picker.show { transform: translateY(0); visibility: visible; }
+  .picker h3 { font-size:15px; margin: 4px 0 12px; }
+  .opts { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+  .opts button { min-height:52px; border-radius:14px; border:1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size:15px;
+                 text-align:left; padding: 0 14px; cursor:pointer; }
+  .opts button.on { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight:600; }
+  .grp { padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .grp:last-child { border-bottom:none; }
+  .grp .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
+  .grp .meta { font-size:13px; color: var(--muted); margin-top:2px; }
+  .grp .acts { display:flex; gap:8px; align-items:center; margin-top:8px; }
+  .grp .acts .pick { flex:1; }
   .bigbar { height:8px; background: var(--track); border-radius:4px; overflow:hidden; margin-top:8px; } .bigbar div { height:100%; background: var(--accent); }
   [hidden] { display: none !important; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -157,9 +178,17 @@
 
     <div class="card review" id="detCard" hidden>
       <h2><span>Detected payments</span><button class="btn small primary" id="logAll"></button></h2>
-      <p class="hint" style="margin-top:0">Found by the on-device AI in your bank SMS. Check, change the category if needed, then log.</p>
+      <p class="hint" style="margin-top:0">New payments found in your bank SMS. Check the category, then log.</p>
       <div id="detList"></div>
       <details id="skippedBox" hidden style="margin-top:8px"><summary class="hint" style="cursor:pointer" id="skippedTitle"></summary><div id="skippedList"></div></details>
+    </div>
+
+    <div class="card" id="histCard" hidden>
+      <h2><span>Imported history</span><button class="btn small primary" id="histAll"></button></h2>
+      <p class="hint" style="margin-top:0" id="histHint"></p>
+      <div class="bigbar" id="histBar" hidden><div style="width:0"></div></div>
+      <div id="histList"></div>
+      <div class="row"><button class="btn small" id="histMore" hidden>Show more</button></div>
     </div>
 
     <div class="card review" id="reviewCard" hidden>
@@ -324,6 +353,8 @@
 
 <div class="sheet-bg" id="sheetBg"></div>
 <div class="sheet" id="sheet" role="dialog" aria-modal="true"><div class="grab"></div><div id="sheetBody"></div></div>
+<div class="picker-bg" id="pickerBg"></div>
+<div class="picker" id="picker" role="dialog" aria-modal="true"><div class="grab"></div><h3 id="pickerTitle"></h3><div class="opts" id="pickerOpts"></div></div>
 <div class="toast" id="toast" role="status"><span id="toastMsg"></span><button id="toastBtn" hidden>Undo</button></div>
 
 <script>
@@ -430,7 +461,7 @@ async function refresh() {
 
 async function loadHome() {
   const [s, review, recent, det] = await Promise.all([api(`/api/summary?month=${localDate().slice(0, 7)}`), api("/api/review"), api("/api/transactions?limit=6"), api("/api/detected")]);
-  renderDetected(det);
+  renderDetected(det); renderHistory(det);
   const b = s.budget;
   $("leftToday").textContent = inr(b.left_today);
   $("leftToday").style.color = b.left_today < 0 ? "var(--red)" : "";
@@ -505,6 +536,89 @@ $("paste").onclick = async () => {
 window.__arthaVoice = (text) => { if (text && text.trim()) { $("input").value = text; addText(text); } };
 $("voice").onclick = () => { if (Native) Native.voice(); else toast("Voice works in the Android app"); };
 
+// ---------- custom picker: replaces the system dropdown everywhere ----------
+const CHEVRON = '<svg viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg>';
+let pickerSelect = null;
+function openPicker(sel) {
+  pickerSelect = sel;
+  $("pickerTitle").textContent = sel.getAttribute("aria-label") || sel.dataset.title || "Choose";
+  $("pickerOpts").innerHTML = [...sel.options].map(o => `<button data-v="${esc(o.value)}" class="${o.value === sel.value ? "on" : ""}">${esc(o.textContent)}</button>`).join("");
+  $("pickerOpts").style.gridTemplateColumns = sel.options.length > 6 ? "1fr 1fr" : "1fr";
+  $("pickerBg").style.display = "block"; requestAnimationFrame(() => $("picker").classList.add("show"));
+}
+function closePicker() { $("picker").classList.remove("show"); $("pickerBg").style.display = "none"; pickerSelect = null; }
+$("pickerBg").onclick = closePicker;
+$("pickerOpts").onclick = (e) => {
+  const b = e.target.closest("[data-v]"); if (!b || !pickerSelect) return;
+  const sel = pickerSelect; sel.value = b.dataset.v; closePicker();
+  sel.dispatchEvent(new Event("change", { bubbles: true })); syncPick(sel);
+};
+function syncPick(sel) { const btn = sel.nextElementSibling; if (btn && btn.classList.contains("pick")) btn.querySelector("span").textContent = sel.selectedOptions[0]?.textContent || ""; }
+function enhanceSelects(root = document) {
+  root.querySelectorAll("select:not([data-enhanced])").forEach(sel => {
+    sel.dataset.enhanced = "1"; sel.hidden = true;
+    const btn = document.createElement("button"); btn.type = "button";
+    btn.className = "pick" + (sel.classList.contains("field") ? " field" : "");
+    btn.innerHTML = `<span></span>${CHEVRON}`; btn.onclick = (e) => { e.stopPropagation(); openPicker(sel); };
+    if (sel.style.width) btn.style.width = sel.style.width;
+    sel.after(btn); syncPick(sel);
+    sel.addEventListener("change", () => syncPick(sel));
+  });
+}
+new MutationObserver(() => enhanceSelects()).observe(document.body, { childList: true, subtree: true });
+
+// ---------- imported history, grouped by payee ----------
+let histShown = 25;
+function renderHistory(det) {
+  const groups = det.groups || [], waiting = det.pending_history || 0;
+  $("histCard").hidden = !groups.length && !waiting;
+  if ($("histCard").hidden) return;
+  const n = det.history_count || 0;
+  $("histAll").hidden = !groups.length; $("histAll").textContent = `Log all ${n}`;
+  $("histHint").textContent = waiting
+    ? `Reading ${waiting} more message${waiting > 1 ? "s" : ""} on your phone (about ${Math.max(1, Math.round(waiting * 3 / 60))} min). You can start reviewing below.`
+    : `${n} payments from ${groups.length} payees. Set the category once per payee, then log. Artha remembers it for future SMS.`;
+  $("histBar").hidden = !waiting;
+  const done = n, total = n + waiting; $("histBar").firstElementChild.style.width = (total ? done / total * 100 : 0) + "%";
+  const cats = (c) => CATS.map(x => `<option ${x === c ? "selected" : ""}>${esc(x)}</option>`).join("");
+  $("histList").innerHTML = groups.slice(0, histShown).map((g, i) => `<div class="grp" data-g="${i}">
+      <div class="top"><span>${esc(g.party || "Unknown")}</span><span class="${g.type === "credit" ? "credit" : ""}">${g.type === "credit" ? "+" : ""}${inr(g.total)}</span></div>
+      <div class="meta">${g.count} ${g.type === "upcoming" ? "scheduled" : g.type === "credit" ? "received" : "payment"}${g.count > 1 && g.type !== "upcoming" ? "s" : ""} · ${dayLabel(String(g.first).slice(0, 10))} to ${dayLabel(String(g.last).slice(0, 10))}${g.unsure ? ` · ${g.unsure} to check` : ""}</div>
+      <div class="acts"><select aria-label="Category for ${esc(g.party)}" data-gcat="${i}">${cats(g.category)}</select>
+        <button class="btn small" data-gact="skip">Skip</button><button class="btn small primary" data-gact="log">Log ${g.count}</button></div>
+    </div>`).join("");
+  $("histMore").hidden = groups.length <= histShown;
+  window.__groups = groups;
+}
+$("histList").addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-gact]"); if (!b) return;
+  const row = b.closest("[data-g]"), g = window.__groups[+row.dataset.g], cat = row.querySelector("select").value;
+  try {
+    const r = await api("/api/detected/group", { json: { party: g.party, type: g.type, action: b.dataset.gact, category: cat } });
+    toast(b.dataset.gact === "skip" ? `Skipped ${r.count}` : `Logged ${r.count} as ${cat}`); refresh();
+  } catch (err) { fail(err); }
+});
+$("histAll").onclick = async () => {
+  if (!confirm(`Log all ${$("histAll").textContent.replace(/\D/g, "")} imported payments with the categories shown?`)) return;
+  try { const r = await api("/api/detected/log-all", { method: "POST" }); toast(`Logged ${r.logged}`); refresh(); } catch (e) { fail(e); }
+};
+$("histMore").onclick = () => { histShown += 25; refresh(); };
+
+// ---------- SMS permission blocked by Android ----------
+window.__arthaPermBlocked = () => {
+  openSheet(`<h2>Android blocked SMS access</h2>
+    <p class="hint" style="margin-top:0">Android does this for apps installed from an APK. Turn it on once and it won't ask again:</p>
+    <ol style="padding-left:20px;line-height:1.6;margin:8px 0">
+      <li>Tap <b>Open App info</b> below</li>
+      <li>Tap the three-dot menu in the top-right corner</li>
+      <li>Choose <b>Allow restricted settings</b> and confirm</li>
+      <li>Come back and tap <b>Allow</b> again</li>
+    </ol>
+    <div class="row"><button class="btn primary" id="permInfo">Open App info</button><button class="btn" id="permLater">Later</button></div>`);
+  $("permInfo").onclick = () => { closeSheet(); if (Native) Native.openAppInfo(); };
+  $("permLater").onclick = closeSheet;
+};
+
 // ---------- detected payments (AI findings waiting for your OK) ----------
 function detItem(d, skipped) {
   const upcoming = d.type === "upcoming", credit = d.type === "credit";
@@ -529,8 +643,9 @@ function renderDetected(det) {
   $("logAll").hidden = items.length < 2; $("logAll").textContent = `Log all (${items.length})`;
   $("skippedBox").hidden = !skipped.length; $("skippedTitle").textContent = `Skipped messages (${skipped.length})`;
   $("skippedList").innerHTML = skipped.map(d => detItem(d, true)).join("");
-  $("workCard").hidden = !det.pending; $("workText").textContent = det.pending ? `Reading ${det.pending} bank message${det.pending > 1 ? "s" : ""} on your phone…` : "";
-  if (det.pending) { clearTimeout(window.__poll); window.__poll = setTimeout(() => tab === "home" && refresh(), 4000); }
+  const live = (det.pending || 0) - (det.pending_history || 0);
+  $("workCard").hidden = live <= 0; $("workText").textContent = live > 0 ? `Reading ${live} bank message${live > 1 ? "s" : ""} on your phone…` : "";
+  if (det.pending) { clearTimeout(window.__poll); window.__poll = setTimeout(() => tab === "home" && refresh(), 5000); }
 }
 $("detCard").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-detact]"); if (!b) return;
@@ -713,7 +828,7 @@ $("modelImport").onclick = () => { if (Native) Native.importModel(); };
 $("modelDelete").onclick = () => { if (confirm("Remove the AI model from this phone? New SMS will wait until you download it again.")) { Native.deleteModel(); refresh(); } };
 $("smsBtn").onclick = () => { const ns = nativeStatus(); if (!ns.sms) { if (Native) Native.requestSms(); } else setting({ auto_capture_sms: !SETTINGS.auto_capture_sms }); };
 $("autoLog").onchange = (e) => setting({ auto_log_confident: e.target.checked }, e.target.checked ? "Confident payments will be logged automatically" : "Every payment will wait for your OK");
-$("smsImport").onclick = () => { if (!Native) return; if (!nativeStatus().model_ready) return toast("Download the AI model first"); Native.importSms(+$("smsMonths").value); };
+$("smsImport").onclick = () => { if (!Native) return; if (!nativeStatus().model_ready) return toast("Download the AI model first"); Native.importSms(+$("smsMonths").value); show("home"); };
 $("notifyLogged").onchange = (e) => { if (e.target.checked && Native && !nativeStatus().post_notifications) Native.requestNotifications(); setting({ notify_logged: e.target.checked }); };
 $("appInfo").onclick = (e) => { e.preventDefault(); if (Native) Native.openAppInfo(); };
 $("appLock").onchange = (e) => setting({ app_lock: e.target.checked }, e.target.checked ? "Artha will ask for your fingerprint when opened" : "App lock off");
@@ -752,6 +867,7 @@ $("delBtn").onclick = async () => {
 window.__arthaRefresh = () => refresh();
 window.__arthaShared = (t) => { show("home"); $("input").value = t; addText(t); };
 window.__arthaBack = () => {
+  if ($("picker").classList.contains("show")) { closePicker(); return true; }
   if ($("sheet").classList.contains("show")) { closeSheet(); return true; }
   if (tab !== "home") { show("home"); return true; }
   return false;

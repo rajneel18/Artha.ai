@@ -171,6 +171,38 @@ class EngineTest {
         assertEquals("upcoming", items().single()["type"]) // mandates still wait for you
     }
 
+    @Test fun importedHistoryIsGroupedByPayee() {
+        model.answers["swiggy"] = """{"type": "debit", "amount": 250, "party": "Swiggy", "category": "Food & Dining"}"""
+        model.answers["kirana"] = """{"type": "debit", "amount": 120, "party": "Ramesh Kirana", "category": "Other"}"""
+        for (i in 1..5) api.captureSms("Rs.250 paid to swiggy Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
+        for (i in 1..3) api.captureSms("Rs.120 paid to kirana Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
+        while (engine.analyzeNext(api.extractor)) {}
+        val d = detected()
+        assertTrue("history doesn't flood the one-by-one list", (d["items"] as List<*>).isEmpty())
+        val groups = d["groups"] as List<Map<String, Any?>>
+        assertEquals(listOf("Swiggy" to 5L, "Ramesh Kirana" to 3L), groups.map { it["party"] to it["count"] })
+        call("POST", "/api/detected/group", mapOf("party" to "Ramesh Kirana", "type" to "debit", "action" to "log", "category" to "Groceries"))
+        assertEquals(3, txs().count { it["category"] == "Groceries" })
+        // the choice is remembered for future SMS from that payee
+        receive("Rs.120 paid to kirana Ref 99")
+        assertEquals("Groceries", items().single()["category"])
+        call("POST", "/api/detected/log-all")
+        assertEquals(9, txs().size)
+        assertTrue("SMS repeats are real payments, not double charges", (call("GET", "/api/review") as List<*>).isEmpty())
+    }
+
+    @Test fun answerWhatWasItFor() {
+        receive(SARASWAT_DEBIT)
+        model.answers["Purpose: lunch"] = """{"category": "Food & Dining"}"""
+        val tx = call("POST", "/api/detected/${items().single()["id"]}", mapOf("action" to "purpose", "purpose" to "lunch")) as Map<String, Any?>
+        assertEquals("Food & Dining", tx["category"]); assertTrue((tx["note"] as String).startsWith("lunch"))
+        // answering again re-categorizes the same payment instead of logging it twice
+        model.answers["Purpose: gift"] = """{"category": "Shopping"}"""
+        val id = (engine.db.one("SELECT id FROM detected")!!["id"] as Long)
+        call("POST", "/api/detected/$id", mapOf("action" to "purpose", "purpose" to "gift"))
+        assertEquals(listOf("Shopping"), txs().map { it["category"] })
+    }
+
     @Test fun allowanceAndSavingsPool() {
         call("PUT", "/api/settings", mapOf("daily_allowance" to 1000, "budget_start" to "2026-11-10"))
         call("POST", "/api/transactions", mapOf("amount" to 400, "merchant" to "Swiggy", "date" to "2026-11-10"))

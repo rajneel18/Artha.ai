@@ -95,7 +95,12 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) { js("window.__arthaToast && __arthaToast('Could not import that file')") }
         }
     }
-    private val askPerms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { js("window.__arthaRefresh && __arthaRefresh()") }
+    private val askPerms = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { res ->
+        // Android blocks SMS permissions for apps installed from an APK until "Allow restricted settings" is turned on.
+        val smsAsked = res.keys.any { it == Manifest.permission.RECEIVE_SMS || it == Manifest.permission.READ_SMS }
+        val denied = res.filterKeys { it == Manifest.permission.RECEIVE_SMS || it == Manifest.permission.READ_SMS }.values.any { !it }
+        js(if (smsAsked && denied) "window.__arthaPermBlocked && __arthaPermBlocked()" else "window.__arthaRefresh && __arthaRefresh()")
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -220,7 +225,7 @@ class MainActivity : AppCompatActivity() {
                 val low = body.lowercase()
                 if (!isBankSender(sender) || !(low.contains("rs") || low.contains("inr") || low.contains("₹"))) continue
                 val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(c.getLong(2)), ZoneId.systemDefault())
-                if (app.api.captureSms(body, sender, at)) n++
+                if (app.api.captureSms(body, sender, at, history = true)) n++
             }
         }
         return n

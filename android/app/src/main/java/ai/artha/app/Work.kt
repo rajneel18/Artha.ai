@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.provider.Telephony
 import androidx.core.app.NotificationCompat
+import ai.artha.core.scalar
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.ForegroundInfo
@@ -48,7 +49,7 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
         val app = Artha.of(applicationContext)
         val engine = app.api.engine
         if (!app.model.available()) return Result.success() // waits in the queue until the model is set up
-        val before = engine.detected()["items"].let { (it as List<*>).size }
+        val lastSeen = (engine.db.scalar("SELECT MAX(id) FROM detected WHERE status != 'pending'") as? Number)?.toLong() ?: 0L
         var done = 0
         try {
             while (true) {
@@ -59,8 +60,10 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
                 done++
             }
         } finally { app.model.release() }
-        val newItems = (engine.detected()["items"] as List<*>).size - before
-        if (newItems > 0) app.notifyDetected(newItems)
+        // Ask about new live SMS payments right away; imported history is reviewed in the app instead.
+        val fresh = engine.db.query("SELECT * FROM detected WHERE id > ? AND source='sms' AND status IN ('analyzed','logged') " +
+            "AND type IN ('debit','credit') ORDER BY id", lastSeen)
+        if (fresh.size in 1..3) fresh.forEach { app.askPurpose(it) } else if (fresh.size > 3) app.notifyDetected(fresh.size)
         return Result.success()
     }
 
@@ -123,5 +126,37 @@ class ModelDownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWor
         const val NAME = "model-download"
         fun start(c: Context) = WorkManager.getInstance(c).enqueueUniqueWork(NAME, ExistingWorkPolicy.KEEP,
             OneTimeWorkRequestBuilder<ModelDownloadWorker>().build())
+    }
+}
+
+
+/** Handles the buttons and the reply box on the "What was it for?" notification. */
+class PaymentActionReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val id = intent.getLongExtra("id", -1); if (id < 0) return
+        val purpose = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Artha.KEY_PURPOSE)?.toString()
+        WorkManager.getInstance(context).enqueue(OneTimeWorkRequestBuilder<PurposeWorker>().setInputData(
+            workDataOf("id" to id, "action" to (intent.action ?: ""), "purpose" to purpose)).build())
+    }
+}
+
+/** Logs the payment: with the category the AI picks from your answer, with its own guess, or skips it. */
+class PurposeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
+    override suspend fun doWork(): Result {
+        val app = Artha.of(applicationContext)
+        val id = inputData.getLong("id", -1)
+        val result = try {
+            when (inputData.getString("action")) {
+                Artha.ACTION_SKIP -> { app.api.engine.skipDetected(id); "Skipped" }
+                Artha.ACTION_ACCEPT -> app.api.engine.logDetected(id, emptyMap())?.let { "Logged as ${it["category"]}" } ?: "Logged"
+                else -> {
+                    val purpose = inputData.getString("purpose")?.trim().orEmpty()
+                    if (purpose.isEmpty()) app.api.engine.logDetected(id, emptyMap())?.let { "Logged as ${it["category"]}" } ?: "Logged"
+                    else app.api.engine.logWithPurpose(id, purpose, app.api.extractor)?.let { "Logged as ${it["category"]}" } ?: "Logged"
+                }
+            }
+        } catch (e: Exception) { "Couldn't log it. Open Artha to review" } finally { app.model.release() }
+        app.finishPurpose(id, result)
+        return Result.success()
     }
 }
