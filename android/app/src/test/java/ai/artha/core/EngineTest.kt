@@ -155,6 +155,7 @@ class EngineTest {
     }
 
     @Test fun statementImportGoesThroughTheQueue() {
+        call("PUT", "/api/settings", mapOf("track_received" to true))
         model.answers["BLINKIT"] = """{"type": "debit", "amount": 320, "party": "Blinkit", "date": "2026-11-10", "category": "Groceries"}"""
         model.answers["SALARY"] = """{"type": "credit", "amount": 50000, "party": "Acme Salary", "date": "2026-11-11", "category": "Other"}"""
         val r = call("POST", "/api/import/text", mapOf("text" to "Date,Narration,Withdrawal Amt,Deposit Amt\n10/11/2026,UPI-BLINKIT-123,320.00,\n11/11/2026,SALARY,,50000\n")) as Map<String, Any?>
@@ -162,6 +163,7 @@ class EngineTest {
         while (engine.analyzeNext(api.extractor)) {}
         call("POST", "/api/detected/log-all")
         val byName = txs().associateBy { it["merchant"] }
+        assertEquals(2, byName.size)
         assertEquals("2026-11-10", byName["Blinkit"]!!["date"]); assertEquals("credit", byName["Acme Salary"]!!["kind"])
     }
 
@@ -182,24 +184,30 @@ class EngineTest {
         assertEquals("upcoming", items().single()["type"]) // mandates still wait for you
     }
 
-    @Test fun importedHistoryIsGroupedByPayee() {
+    @Test fun importedHistoryLogsConfidentAndGroupsTheRest() {
         model.answers["swiggy"] = """{"type": "debit", "amount": 250, "party": "Swiggy", "category": "Food & Dining"}"""
         model.answers["kirana"] = """{"type": "debit", "amount": 120, "party": "Ramesh Kirana", "category": "Other"}"""
+        model.answers["account"] = """{"type": "debit", "amount": 90, "party": "Your Account", "category": "Transfers"}"""
         for (i in 1..5) api.captureSms("Rs.250 paid to swiggy Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
         for (i in 1..3) api.captureSms("Rs.120 paid to kirana Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
+        api.captureSms("Rs.90 debited from your account Ref 7", "AX-HDFCBK", now.minusDays(2), history = true)
         while (engine.analyzeNext(api.extractor)) {}
         val d = detected()
-        assertTrue("history doesn't flood the one-by-one list", (d["items"] as List<*>).isEmpty())
+        assertEquals("confident payments are logged without asking", 5L, d["history_logged"])
         val groups = d["groups"] as List<Map<String, Any?>>
-        assertEquals(listOf("Swiggy" to 5L, "Ramesh Kirana" to 3L), groups.map { it["party"] to it["count"] })
+        assertEquals(setOf("Ramesh Kirana" to 3L, "Unknown" to 1L), groups.map { it["party"] to it["count"] }.toSet())
+        assertTrue("each group shows its messages", (groups.first()["samples"] as List<*>).isNotEmpty())
         call("POST", "/api/detected/group", mapOf("party" to "Ramesh Kirana", "type" to "debit", "action" to "log", "category" to "Groceries"))
-        assertEquals(3, txs().count { it["category"] == "Groceries" })
-        // the choice is remembered for future SMS from that payee
         receive("Rs.120 paid to kirana Ref 99")
         assertEquals("Groceries", items().single()["category"])
-        call("POST", "/api/detected/log-all")
-        assertEquals(9, txs().size)
-        assertTrue("SMS repeats are real payments, not double charges", (call("GET", "/api/review") as List<*>).isEmpty())
+        assertEquals(5L, (call("POST", "/api/detected/undo-history") as Map<String, Any?>)["removed"].let { (it as Long) - 3 })
+    }
+
+    @Test fun receivedMoneyIsHiddenByDefault() {
+        receive("Your a/c no. XX6196 is credited by Rs.2,500.00 from vpa rahul.patil22@oksbi (UPI Ref no 6318) - Saraswat Co-op Bank Ltd.")
+        assertTrue(items().isEmpty()); assertEquals(0, model.calls)
+        receive("Rs 13,428.00 blocked in your a/c XX6196 for IPO of Jio Platforms Ltd - Saraswat Co-op Bank Ltd.")
+        assertTrue("IPO blocks aren't spending or income", items().isEmpty())
     }
 
     @Test fun answerWhatWasItFor() {

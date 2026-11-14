@@ -218,12 +218,17 @@ class MainActivity : AppCompatActivity() {
     private fun importInbox(months: Int): Int {
         val since = LocalDateTime.now().minusMonths(months.toLong()).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
         var n = 0
+        val trackReceived = app.api.engine.settings()["track_received"] == true
         contentResolver.query(Telephony.Sms.Inbox.CONTENT_URI, arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE),
             "${Telephony.Sms.DATE} >= ?", arrayOf(since.toString()), "${Telephony.Sms.DATE} ASC")?.use { c ->
             while (c.moveToNext()) {
                 val sender = c.getString(0) ?: continue; val body = c.getString(1) ?: continue
                 val low = body.lowercase()
                 if (!isBankSender(sender) || !(low.contains("rs") || low.contains("inr") || low.contains("₹"))) continue
+                // Only messages that say money went out (or came in, if you track it) are worth the AI's time.
+                val ex = app.api.extractor
+                if (!ex.mentionsMoneyOut(body) && !(trackReceived && ex.onlyMoneyIn(body))) continue
+                if (ex.safetyCheck(body)?.first == "ignore") continue
                 val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(c.getLong(2)), ZoneId.systemDefault())
                 if (app.api.captureSms(body, sender, at, history = true)) n++
             }

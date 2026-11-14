@@ -59,6 +59,13 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             db.exec("UPDATE detected SET status='pending' WHERE status='analyzed' AND (lower(party) LIKE '%bank%' OR lower(party) LIKE '%co-op%')")
             db.exec("PRAGMA user_version = 2")
         }
+        if (version < 3) {
+            // v2.3: re-read items named after an account/card/code, and hide received money (now off by default).
+            db.exec("UPDATE detected SET status='pending' WHERE status='analyzed' AND (lower(party) LIKE '%account%' OR lower(party) LIKE '%bank%' " +
+                "OR lower(party) LIKE '%slice%' OR lower(party) LIKE '%cc payment%' OR length(party) < 4)")
+            db.exec("UPDATE detected SET status='skipped', reason='Money received isn''t tracked (Settings)' WHERE status IN ('analyzed','pending') AND type='credit'")
+            db.exec("PRAGMA user_version = 3")
+        }
     }
 
     // ---------------- settings & budget ----------------
@@ -74,6 +81,8 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             "app_lock" to false,
             "hide_in_recents" to true,
             "auto_log_confident" to false,
+            "auto_log_history" to true,
+            "track_received" to false,
         )
         val FIXED = setOf("Rent", "Bills & Utilities", "Investments", "Transfers", "Education")
         val REVIEW_QUESTIONS = mapOf(
@@ -621,7 +630,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         val cats = allCategories(); val known = learnedMap()
         val v = try {
             if (r.s("source") == "import" && !r.s("header").isNullOrBlank()) ex.fromRow(r.s("header")!!, r.s("body")!!, cats, known)
-            else ex.fromSms(r.s("body")!!, cats, known)
+            else ex.fromSms(r.s("body")!!, cats, known, settings()["track_received"] == true)
         } catch (e: ModelMissing) { throw e } catch (e: Exception) { Extractor.Verdict(null, "The AI couldn't read this message") }
         val it = v.item
         // Your rules and corrections take priority over the AI's category guess.
@@ -630,7 +639,15 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         db.exec("UPDATE detected SET status=?, type=?, amount=?, party=?, category=?, date=?, confident=?, reason=?, split_with=?, split_ways=? WHERE id=?",
             status, it?.type, it?.amount, it?.party, cat, it?.date?.toString(), if (it?.confident == true) 1L else 0L, v.reason,
             it?.splitWith?.joinToString(","), it?.splitWays?.toLong(), id)
-        if (status == "analyzed" && settings()["auto_log_confident"] == true && it!!.confident && it.type != "upcoming" && v.reason == null) logDetected(id, emptyMap())
+        val history = r.s("source") in setOf("history", "import")
+        if (status == "analyzed" && history && it!!.type == "upcoming") {
+            // An old "scheduled" message is in the past; the real debit SMS (if any) is imported separately.
+            db.exec("UPDATE detected SET status='skipped', reason='Old scheduled payment' WHERE id=?", id); return true
+        }
+        if (status == "analyzed" && it!!.confident && it.type != "upcoming" && v.reason == null && it.party != "Unknown" &&
+            ((history && settings()["auto_log_history"] != false && cat != "Other") || (!history && settings()["auto_log_confident"] == true))) logDetected(id, emptyMap())
+        if (status == "analyzed" && !history && it!!.type == "credit" && settings()["track_received"] != true)
+            db.exec("UPDATE detected SET status='skipped', reason='Money received isn''t tracked (Settings)' WHERE id=?", id)
         return true
     }
 
@@ -645,14 +662,29 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
                 "(SELECT d2.category FROM detected d2 WHERE d2.status='analyzed' AND d2.source IN ('history','import') AND lower(d2.party)=lower(d.party) " +
                 " AND d2.type=d.type GROUP BY d2.category ORDER BY COUNT(*) DESC LIMIT 1) AS category " +
                 "FROM detected d WHERE status='analyzed' AND source IN ('history','import') GROUP BY lower(party), type ORDER BY total DESC")
+        val withSamples = groups.map { g ->
+            g.toMutableMap().apply {
+                this["samples"] = db.query("SELECT body, amount, received_at FROM detected WHERE status='analyzed' AND source IN ('history','import') " +
+                    "AND lower(party)=lower(?) AND type=? ORDER BY received_at DESC LIMIT 3", g.s("party"), g.s("type"))
+            }
+        }
         return mapOf(
+            "history_logged" to db.count("SELECT COUNT(*) FROM transactions WHERE source IN ('history','import')"),
             "pending" to pendingCount(),
             "pending_history" to db.count("SELECT COUNT(*) FROM detected WHERE status='pending' AND source IN ('history','import')"),
             "items" to db.query("SELECT * FROM detected WHERE status='analyzed' AND source='sms' ORDER BY received_at DESC, id DESC LIMIT 200"),
-            "groups" to groups,
+            "groups" to withSamples,
             "history_count" to groups.sumOf { it.l("count") ?: 0L },
             "skipped" to db.query("SELECT * FROM detected WHERE status='skipped' ORDER BY received_at DESC, id DESC LIMIT 100"),
         )
+    }
+
+    /** Removes everything logged from imported history, so you can start over. */
+    fun undoHistory(): Int = db.transaction {
+        val ids = db.query("SELECT id FROM transactions WHERE source IN ('history','import')").mapNotNull { it.l("id") }
+        ids.forEach { db.exec("DELETE FROM transactions WHERE id=?", it) }
+        db.exec("UPDATE detected SET status='skipped', reason='Import undone', tx_id=NULL WHERE source IN ('history','import') AND status IN ('logged','analyzed')")
+        ids.size
     }
 
     /** Log or skip every imported item for one payee, optionally setting the category for all of them. */

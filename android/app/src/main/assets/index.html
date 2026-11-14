@@ -61,6 +61,8 @@
   .grp:last-child { border-bottom:none; }
   .grp .top { display:flex; justify-content:space-between; gap:8px; font-weight:600; }
   .grp .meta { font-size:13px; color: var(--muted); margin-top:2px; }
+  .grp details summary { font-size:12px; color: var(--muted); cursor:pointer; margin-top:6px; }
+  .grp details p { font-size:12px; color: var(--muted); margin:6px 0 0; word-break: break-word; }
   .grp .acts { display:flex; gap:8px; align-items:center; margin-top:8px; }
   .grp .acts .pick { flex:1; }
   .bigbar { height:8px; background: var(--track); border-radius:4px; overflow:hidden; margin-top:8px; } .bigbar div { height:100%; background: var(--accent); }
@@ -188,7 +190,7 @@
       <p class="hint" style="margin-top:0" id="histHint"></p>
       <div class="bigbar" id="histBar" hidden><div style="width:0"></div></div>
       <div id="histList"></div>
-      <div class="row"><button class="btn small" id="histMore" hidden>Show more</button></div>
+      <div class="row"><button class="btn small" id="histMore" hidden>Show more</button><button class="btn small danger" id="histUndo" hidden>Undo import</button></div>
     </div>
 
     <div class="card review" id="reviewCard" hidden>
@@ -310,6 +312,8 @@
       <div class="list-item"><div><div>Read new bank SMS</div><div class="hint" style="margin:0" id="smsState"></div></div><button class="btn small" id="smsBtn"></button></div>
       <div class="switch"><span>Log confident payments without asking</span><input type="checkbox" id="autoLog"></div>
       <div class="switch"><span>Notify me when payments are detected</span><input type="checkbox" id="notifyLogged"></div>
+      <div class="switch"><span>Log confident imported payments automatically</span><input type="checkbox" id="autoHistory"></div>
+      <div class="switch"><span>Track money received</span><input type="checkbox" id="trackReceived"></div>
       <div class="list-item"><div><div>Import past SMS</div><div class="hint" style="margin:0">Bank messages already on your phone</div></div>
         <span class="row" style="margin:0;flex-wrap:nowrap"><select class="field" id="smsMonths" style="width:auto;padding:8px"><option value="1">1 month</option><option value="3" selected>3 months</option><option value="6">6 months</option><option value="12">12 months</option></select><button class="btn small" id="smsImport">Import</button></span></div>
       <p class="hint">Only messages from bank senders (like AX-SARBNK) are read. Texts from people are ignored. If Android says "Restricted setting", open <a href="#" id="appInfo">App info</a>, tap the three-dot menu, choose <b>Allow restricted settings</b>, then try again.</p>
@@ -571,19 +575,23 @@ new MutationObserver(() => enhanceSelects()).observe(document.body, { childList:
 let histShown = 25;
 function renderHistory(det) {
   const groups = det.groups || [], waiting = det.pending_history || 0;
-  $("histCard").hidden = !groups.length && !waiting;
+  const logged = det.history_logged || 0;
+  $("histCard").hidden = !groups.length && !waiting && !logged;
   if ($("histCard").hidden) return;
   const n = det.history_count || 0;
   $("histAll").hidden = !groups.length; $("histAll").textContent = `Log all ${n}`;
+  $("histUndo").hidden = !logged;
+  const auto = logged ? `${logged} logged automatically. ` : "";
   $("histHint").textContent = waiting
-    ? `Reading ${waiting} more message${waiting > 1 ? "s" : ""} on your phone (about ${Math.max(1, Math.round(waiting * 3 / 60))} min). You can start reviewing below.`
-    : `${n} payments from ${groups.length} payees. Set the category once per payee, then log. Artha remembers it for future SMS.`;
+    ? `${auto}Reading ${waiting} more message${waiting > 1 ? "s" : ""} (about ${Math.max(1, Math.round(waiting * 2 / 60))} min).${n ? " These need a look:" : ""}`
+    : n ? `${auto}${n} need a look: fix the name or category, then log.` : `${auto}All done. Nothing needs a look.`;
   $("histBar").hidden = !waiting;
   const done = n, total = n + waiting; $("histBar").firstElementChild.style.width = (total ? done / total * 100 : 0) + "%";
   const cats = (c) => CATS.map(x => `<option ${x === c ? "selected" : ""}>${esc(x)}</option>`).join("");
   $("histList").innerHTML = groups.slice(0, histShown).map((g, i) => `<div class="grp" data-g="${i}">
       <div class="top"><span>${esc(g.party || "Unknown")}</span><span class="${g.type === "credit" ? "credit" : ""}">${g.type === "credit" ? "+" : ""}${inr(g.total)}</span></div>
       <div class="meta">${g.count} ${g.type === "upcoming" ? "scheduled" : g.type === "credit" ? "received" : "payment"}${g.count > 1 && g.type !== "upcoming" ? "s" : ""} · ${dayLabel(String(g.first).slice(0, 10))} to ${dayLabel(String(g.last).slice(0, 10))}${g.unsure ? ` · ${g.unsure} to check` : ""}</div>
+      <details><summary>See message${g.count > 1 ? "s" : ""}</summary>${(g.samples || []).map(m => `<p>${esc(dayLabel(String(m.received_at).slice(0, 10)))}: ${esc(m.body)}</p>`).join("")}</details>
       <div class="acts"><select aria-label="Category for ${esc(g.party)}" data-gcat="${i}">${cats(g.category)}</select>
         <button class="btn small" data-gact="skip">Skip</button><button class="btn small primary" data-gact="log">Log ${g.count}</button></div>
     </div>`).join("");
@@ -603,6 +611,10 @@ $("histAll").onclick = async () => {
   try { const r = await api("/api/detected/log-all", { method: "POST" }); toast(`Logged ${r.logged}`); refresh(); } catch (e) { fail(e); }
 };
 $("histMore").onclick = () => { histShown += 25; refresh(); };
+$("histUndo").onclick = async () => {
+  if (!confirm("Remove every payment that was logged from imported history?")) return;
+  try { const r = await api("/api/detected/undo-history", { method: "POST" }); toast(`Removed ${r.removed}`); refresh(); } catch (e) { fail(e); }
+};
 
 // ---------- SMS permission blocked by Android ----------
 window.__arthaPermBlocked = () => {
@@ -792,6 +804,7 @@ async function loadSettings() {
   $("smsState").textContent = ns.sms ? (s.auto_capture_sms ? "On" : "Paused") : "Needs permission";
   $("smsBtn").textContent = ns.sms ? (s.auto_capture_sms ? "Pause" : "Resume") : "Allow";
   $("autoLog").checked = !!s.auto_log_confident;
+  $("autoHistory").checked = s.auto_log_history !== false; $("trackReceived").checked = !!s.track_received;
   $("notifyLogged").checked = !!s.notify_logged;
   $("lockRow").hidden = !ns.can_lock; $("appLock").checked = !!s.app_lock; $("hideRecents").checked = s.hide_in_recents !== false;
   $("version").textContent = ns.version ? `Artha ${ns.version}` : "";
@@ -828,6 +841,8 @@ $("modelImport").onclick = () => { if (Native) Native.importModel(); };
 $("modelDelete").onclick = () => { if (confirm("Remove the AI model from this phone? New SMS will wait until you download it again.")) { Native.deleteModel(); refresh(); } };
 $("smsBtn").onclick = () => { const ns = nativeStatus(); if (!ns.sms) { if (Native) Native.requestSms(); } else setting({ auto_capture_sms: !SETTINGS.auto_capture_sms }); };
 $("autoLog").onchange = (e) => setting({ auto_log_confident: e.target.checked }, e.target.checked ? "Confident payments will be logged automatically" : "Every payment will wait for your OK");
+$("autoHistory").onchange = (e) => setting({ auto_log_history: e.target.checked });
+$("trackReceived").onchange = (e) => setting({ track_received: e.target.checked }, e.target.checked ? "Money received will be tracked" : "Money received won't be shown");
 $("smsImport").onclick = () => { if (!Native) return; if (!nativeStatus().model_ready) return toast("Download the AI model first"); Native.importSms(+$("smsMonths").value); show("home"); };
 $("notifyLogged").onchange = (e) => { if (e.target.checked && Native && !nativeStatus().post_notifications) Native.requestNotifications(); setting({ notify_logged: e.target.checked }); };
 $("appInfo").onclick = (e) => { e.preventDefault(); if (Native) Native.openAppInfo(); };

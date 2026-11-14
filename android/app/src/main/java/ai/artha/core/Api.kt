@@ -44,6 +44,7 @@ class Api(val engine: Engine, val model: LocalModel) {
             // ---- detected by the on-device AI, waiting for your OK ----
             m == "GET" && p == listOf("detected") -> engine.detected()
             m == "POST" && p == listOf("detected", "log-all") -> mapOf("logged" to engine.logAllDetected())
+            m == "POST" && p == listOf("detected", "undo-history") -> mapOf("removed" to engine.undoHistory())
             m == "POST" && p == listOf("detected", "group") -> {
                 val action = b.str("action") ?: "log"
                 if (action !in setOf("log", "skip")) throw ApiError(400, "Unknown action")
@@ -210,7 +211,7 @@ class Api(val engine: Engine, val model: LocalModel) {
         b.strList("custom_categories")?.let { l -> clean["custom_categories"] = l.map { it.trim().take(30) }.filter { it.isNotEmpty() }.toSortedSet().take(30) }
         b.dbl("savings_goal_pct")?.let { clean["savings_goal_pct"] = it.toLong().coerceIn(0, 90) }
         b.str("budget_start")?.let { clean["budget_start"] = LocalDate.parse(it).toString() }
-        for (k in listOf("auto_capture_sms", "auto_log_confident", "notify_logged", "app_lock", "hide_in_recents"))
+        for (k in listOf("auto_capture_sms", "auto_log_confident", "auto_log_history", "track_received", "notify_logged", "app_lock", "hide_in_recents"))
             b.bool(k)?.let { clean[k] = it }
         engine.ensureStarted()
         return engine.setSettings(clean).apply { this["model_ready"] = model.available() }

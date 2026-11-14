@@ -163,7 +163,11 @@ JSON:""".trimIndent()
     // The model does all the reading. These words only veto its answer, because small models
     // can't reliably tell "money moved" from "money will move" or "money didn't move".
     private val NOT_A_PAYMENT = listOf("otp", "one time password", "verification code", "failed", "declined", "unsuccessful",
-        "not processed", "could not be processed", "pre-approved", "preapproved", "apply now")
+        "not processed", "could not be processed", "pre-approved", "preapproved", "apply now",
+        // IPO bids and mandate set-up only block or authorise money; nothing is spent yet.
+        "ipo", "blocked", "unblocked", "mandate request", "mandate registered", "mandate created", "mandate revoked",
+        "mandate paused", "mandate cancelled", "collect request", "has requested", "requested money")
+    private val MONEY_OUT = listOf("debited", "debit", "paid", "sent", "spent", "withdrawn", "purchase", "transferred", "deducted")
     private val LATER = listOf("scheduled", "will be debited", "to be debited", "is due", "due on", "due date", "will be deducted")
 
     /** Lower-case words joined by single spaces, so phrases match on word boundaries without patterns. */
@@ -179,6 +183,24 @@ JSON:""".trimIndent()
     }
 
     data class Verdict(val item: Item?, val reason: String?)
+
+    /** True when the message only says money came in. Used to skip received money without running the model. */
+    fun onlyMoneyIn(text: String): Boolean { val w = words(text); return " credited " in w && MONEY_OUT.none { " $it " in w } }
+
+    /** True when the message says money went out. Past-SMS import only reads these, to keep the work small. */
+    fun mentionsMoneyOut(text: String): Boolean { val w = words(text); return MONEY_OUT.any { " $it " in w } }
+
+    // Answers that name the user's own account, a card or bank, or a code instead of a real payee.
+    private val NOT_A_PAYEE = listOf("your account", "your a/c", "account", "a/c", "self", "you", "customer", "cc payment", "cc payments",
+        "credit card", "card", "bank", "co-op", "slice", "hdfc", "icici", "sbi", "axis", "kotak", "saraswat", "idfc",
+        "indusind", "federal", "rbl", "yes bank", "canara", "union bank", "bank of baroda", "pnb", "unknown")
+    fun isNotAPayee(party: String): Boolean {
+        val p = party.lowercase().trim()
+        if (p.length < 3) return true
+        if (p.any { it.isDigit() } && ' ' !in p) return true // codes like D04
+        if (p.any { it == '@' || it == '_' } || (p.contains('.') && ' ' !in p)) return true // raw UPI IDs
+        return NOT_A_PAYEE.any { p == it || p.startsWith("$it ") || p.endsWith(" $it") || p.contains(" $it ") }
+    }
 
     /** Reads one SMS. The safety check can turn a debit into "ignore" or "upcoming". */
     /**
@@ -202,18 +224,19 @@ JSON:""".trimIndent()
 
     private fun isBankName(party: String) = party.lowercase().let { "bank" in it || " co-op" in it || "ltd" in it }
 
-    fun fromSms(sms: String, categories: List<String>, known: Map<String, String>): Verdict {
+    fun fromSms(sms: String, categories: List<String>, known: Map<String, String>, trackReceived: Boolean = true): Verdict {
         val safety = safetyCheck(sms)
         if (safety?.first == "ignore") return Verdict(Item("ignore", 0.0, "", null, "Other", true), safety.second)
+        if (!trackReceived && onlyMoneyIn(sms)) return Verdict(Item("ignore", 0.0, "", null, "Other", true), "Money received isn't tracked (Settings)")
         val clean = withoutSignature(sms)
         val (prefix, suffix) = smsPromptParts(clean, categories, known)
         var item = askSplit(prefix, suffix)?.let { toItem(it, clean, categories) } ?: return Verdict(null, "The AI couldn't read this message")
-        // A bank name, nothing, or a raw ID like "shravani.shinde109-1" isn't a payee: use the name inside the UPI ID instead.
-        val looksLikeId = item.party.any { it.isDigit() || it == '@' || it == '_' } || (item.party.contains('.') && !item.party.contains(' '))
-        if (item.type != "ignore" && (isBankName(item.party) || item.party == "Unknown" || looksLikeId)) {
-            val fromId = nameFromUpiId(clean)
-            item = if (fromId != null) item.copy(party = fromId) else item.copy(confident = false)
+        // Your account, a bank or card name, a code or a raw UPI ID isn't a payee: use the name inside the UPI ID, else ask.
+        if (item.type != "ignore" && isNotAPayee(item.party)) {
+            val fromId = nameFromUpiId(clean)?.takeIf { !isNotAPayee(it) }
+            item = if (fromId != null) item.copy(party = fromId) else item.copy(party = "Unknown", confident = false)
         }
+        if (item.type == "credit" && !trackReceived) return Verdict(item.copy(type = "ignore"), "Money received isn't tracked (Settings)")
         if (safety?.first == "upcoming" && item.type != "ignore") return Verdict(item.copy(type = "upcoming"), safety.second)
         return Verdict(item, null)
     }
