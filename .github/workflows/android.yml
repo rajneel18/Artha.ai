@@ -1,0 +1,40 @@
+name: Build APK
+
+on:
+  push:
+    paths: ["android/**", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14.3"
+      - name: Unit tests
+        run: gradle testDebugUnitTest --no-daemon
+      - name: Signing key (optional)
+        # Add repository secrets ANDROID_KEYSTORE_BASE64 and ANDROID_KEYSTORE_PASSWORD to sign with your own key,
+        # so new builds install as updates over the previous one.
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PW: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        if: env.KEYSTORE_B64 != ''
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > release.jks
+          printf "storeFile=release.jks\nstorePassword=%s\nkeyAlias=artha\nkeyPassword=%s\n" "$KEYSTORE_PW" "$KEYSTORE_PW" > keystore.properties
+      - name: Build APK
+        run: gradle assembleRelease --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: artha-apk
+          path: android/app/build/outputs/apk/release/app-release.apk
