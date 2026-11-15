@@ -70,3 +70,12 @@ fun Map<String, Any?>.strList(k: String): List<String>? = (this[k] as? List<Any?
 class ApiError(val status: Int, message: String) : Exception(message)
 
 fun titleCase(s: String): String = s.lowercase().split(" ").joinToString(" ") { w -> w.replaceFirstChar { it.titlecase(java.util.Locale.ENGLISH) } }
+
+/** Empty stand-in used only so the screen can open and explain a startup problem. */
+class InMemoryDb : Db {
+    override fun query(sql: String, vararg args: Any?): List<Row> = emptyList()
+    override fun exec(sql: String, vararg args: Any?) {}
+    override fun insert(sql: String, vararg args: Any?): Long = -1
+    override fun <T> transaction(block: () -> T): T = block()
+    override fun vacuum() {}
+}

@@ -26,10 +26,18 @@ class Artha : Application() {
     lateinit var model: QwenModel
         private set
 
+    /** Set when the engine couldn't start (e.g. a database problem), so the screen can explain instead of crashing. */
+    var startupError: String? = null
+        private set
+
     override fun onCreate() {
         super.onCreate()
+        CrashGuard.install(this)
         model = QwenModel(this)
-        api = Api(Engine(AndroidDb(this)), model)
+        api = try { Api(Engine(AndroidDb(this)), model) } catch (e: Throwable) {
+            startupError = CrashGuard.describe(e); CrashGuard.save(this, startupError!!)
+            Api(Engine(ai.artha.core.InMemoryDb()), model) // lets the screen open and show the error
+        }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_DETECTED, "Payments detected", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "When Artha finds payments in your bank SMS for you to confirm"

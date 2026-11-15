@@ -259,6 +259,8 @@ class MainActivity : AppCompatActivity() {
             "pending" to app.api.engine.pendingCount(),
             "can_lock" to canLock(),
             "version" to packageManager.getPackageInfo(packageName, 0).versionName,
+            "crash_report" to CrashGuard.report(this@MainActivity),
+            "startup_error" to app.startupError,
         )).toString()
 
         @JavascriptInterface fun requestSms() = askPerms.launch(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.POST_NOTIFICATIONS))
@@ -270,6 +272,10 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun importModel() = runOnUiThread { pickModel.launch(arrayOf("*/*")) }
         @JavascriptInterface fun deleteModel() { app.model.release(); QwenModel.file(this@MainActivity).delete() }
         @JavascriptInterface fun analyze() = AnalyzeWorker.start(this@MainActivity)
+        @JavascriptInterface fun copyText(text: String) = runOnUiThread {
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("Artha report", text))
+        }
+        @JavascriptInterface fun clearCrash() = CrashGuard.clear(this@MainActivity)
 
         @JavascriptInterface
         fun importSms(months: Int) {

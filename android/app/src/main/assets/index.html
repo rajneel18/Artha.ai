@@ -176,6 +176,13 @@
       <div class="meter" id="meter"><div style="width:0"></div></div>
     </div>
 
+    <div class="card review" id="crashCard" hidden>
+      <h2>Artha stopped last time</h2>
+      <p class="hint" style="margin-top:0">It has already switched to a safer mode. If something still isn't right, copy this report and send it to the developer.</p>
+      <details><summary class="hint" style="cursor:pointer">Show report</summary><pre id="crashText" style="white-space:pre-wrap;font-size:11px;color:var(--muted);max-height:240px;overflow:auto"></pre></details>
+      <div class="row"><button class="btn small primary" id="crashCopy">Copy report</button><button class="btn small" id="crashDismiss">Dismiss</button></div>
+    </div>
+
     <div class="card" id="workCard" hidden><div class="banner"><div class="spin"></div><span id="workText"></span></div></div>
 
     <div class="card review" id="detCard" hidden>
@@ -480,6 +487,8 @@ async function loadHome() {
   $("reviewCard").hidden = !review.length; $("reviewCount").textContent = review.length;
   $("reviewList").innerHTML = review.map(reviewItem).join("");
   const ns = nativeStatus(); $("autoHint").hidden = !Native || (ns.sms && ns.model_ready);
+  const report = ns.startup_error || ns.crash_report;
+  $("crashCard").hidden = !report; $("crashText").textContent = report || "";
   $("recent").innerHTML = recent.map(txRow).join("") || '<p class="hint">No spending yet. Pay with UPI and it shows up here, or add one above.</p>';
 }
 function reviewItem(t) {
@@ -610,6 +619,8 @@ $("histAll").onclick = async () => {
   if (!confirm(`Log all ${$("histAll").textContent.replace(/\D/g, "")} imported payments with the categories shown?`)) return;
   try { const r = await api("/api/detected/log-all", { method: "POST" }); toast(`Logged ${r.logged}`); refresh(); } catch (e) { fail(e); }
 };
+$("crashCopy").onclick = () => { if (Native) { Native.copyText($("crashText").textContent); toast("Report copied"); } };
+$("crashDismiss").onclick = () => { if (Native) Native.clearCrash(); $("crashCard").hidden = true; };
 $("histMore").onclick = () => { histShown += 25; refresh(); };
 $("histUndo").onclick = async () => {
   if (!confirm("Remove every payment that was logged from imported history?")) return;

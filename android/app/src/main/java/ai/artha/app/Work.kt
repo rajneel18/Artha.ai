@@ -55,7 +55,7 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
             while (true) {
                 val left = engine.pendingCount()
                 if (left == 0L) break
-                if (left > 3) setForeground(progressInfo("Reading bank messages… $left left", done, (done + left).toInt()))
+                if (left > 3) safeForeground(progressInfo("Reading bank messages… $left left", done, (done + left).toInt()))
                 if (!engine.analyzeNext(app.api.extractor)) break
                 done++
                 // Short breather between messages so the phone stays smooth during big imports.
@@ -70,6 +70,9 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
     }
 
     override suspend fun getForegroundInfo() = progressInfo("Reading bank messages…", 0, 0)
+
+    /** Android can refuse a background progress notification; the work just carries on without it. */
+    private suspend fun safeForeground(info: ForegroundInfo) { try { setForeground(info) } catch (_: Throwable) {} }
 
     private fun progressInfo(text: String, done: Int, total: Int): ForegroundInfo {
         val n = NotificationCompat.Builder(applicationContext, Artha.CH_WORK).setSmallIcon(R.drawable.ic_stat_rupee)
@@ -90,7 +93,7 @@ class ModelDownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWor
         val target = QwenModel.file(applicationContext); target.parentFile?.mkdirs()
         val part = File(target.path + ".part")
         return try {
-            setForeground(info(0))
+            try { setForeground(info(0)) } catch (_: Throwable) {}
             val conn = (URL(QwenModel.URL).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true; connectTimeout = 30_000; readTimeout = 60_000
                 if (part.exists()) setRequestProperty("Range", "bytes=${part.length()}-")
@@ -108,7 +111,7 @@ class ModelDownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWor
                         val n = inp.read(buf); if (n < 0) break
                         out.write(buf, 0, n); written += n
                         val pct = (written * 100 / total).toInt()
-                        if (pct != lastPct) { lastPct = pct; setProgress(workDataOf("pct" to pct)); setForeground(info(pct)) }
+                        if (pct != lastPct) { lastPct = pct; setProgress(workDataOf("pct" to pct)); try { setForeground(info(pct)) } catch (_: Throwable) {} }
                     }
                 }
             }

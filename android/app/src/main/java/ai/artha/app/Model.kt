@@ -27,28 +27,33 @@ class QwenModel(private val context: Context) : LocalModel {
     private var engine: LlmInference? = null
     private var cachedPrefix: String? = null
     private var base: LlmInferenceSession? = null
-    private var cloningWorks = true
+    private val cloningWorks get() = !cloningFailed && !CrashGuard.isOff(context, "reuse")
+    private var cloningFailed = false
 
     // Chat formatting is added by hand so a shared prefix can be cached.
     private val noTemplates = PromptTemplates.builder().setUserPrefix("").setUserSuffix("").setModelPrefix("").setModelSuffix("")
         .setSystemPrefix("").setSystemSuffix("").build()
 
-    override fun available(): Boolean = file(context).let { it.isFile && it.length() > 100_000_000 }
+    /** Off if even the safe CPU mode crashed on this phone; queued messages then just wait. */
+    override fun available(): Boolean = file(context).let { it.isFile && it.length() > 100_000_000 } && !CrashGuard.isOff(context, "cpu")
 
     private fun load(backend: LlmInference.Backend) = LlmInference.createFromOptions(context, LlmInference.LlmInferenceOptions.builder()
         .setModelPath(file(context).absolutePath).setMaxTokens(2048).setMaxTopK(1).setPreferredBackend(backend).build())
 
-    private fun engine(): LlmInference = engine ?: (try { load(LlmInference.Backend.GPU) } catch (e: Throwable) {
-        Log.w("Artha", "GPU unavailable, using CPU", e); load(LlmInference.Backend.CPU)
-    }).also { engine = it }
+    private fun engine(): LlmInference = engine ?: run {
+        if (CrashGuard.isOff(context, "gpu")) load(LlmInference.Backend.CPU)
+        else try { CrashGuard.risky(context, "gpu") { load(LlmInference.Backend.GPU) } } catch (e: Throwable) {
+            Log.w("Artha", "GPU unavailable, using CPU", e); load(LlmInference.Backend.CPU)
+        }
+    }.also { engine = it }
 
     private fun newSession() = LlmInferenceSession.createFromOptions(engine(), LlmInferenceSession.LlmInferenceSessionOptions.builder()
         .setTopK(1).setTemperature(0f).setRandomSeed(1).setPromptTemplates(noTemplates).build())
 
     @Synchronized
-    override fun generate(prompt: String): String {
+    override fun generate(prompt: String): String = CrashGuard.risky(context, if (CrashGuard.isOff(context, "gpu")) "cpu" else "gpu") {
         val s = newSession()
-        return try { s.addQueryChunk(USER + prompt + ASSISTANT); s.generateResponse() } finally { s.close() }
+        try { s.addQueryChunk(USER + prompt + ASSISTANT); s.generateResponse() } finally { s.close() }
     }
 
     @Synchronized
@@ -60,11 +65,13 @@ class QwenModel(private val context: Context) : LocalModel {
                 base = newSession().also { it.addQueryChunk(USER + prefix) }
                 cachedPrefix = prefix
             }
-            val s = base!!.cloneSession()
-            return try { s.addQueryChunk(suffix + ASSISTANT); s.generateResponse() } finally { s.close() }
+            return CrashGuard.risky(context, "reuse") {
+                val s = base!!.cloneSession()
+                try { s.addQueryChunk(suffix + ASSISTANT); s.generateResponse() } finally { s.close() }
+            }
         } catch (e: Throwable) {
             Log.w("Artha", "Prefix reuse not supported here, using full prompts", e)
-            cloningWorks = false; base?.close(); base = null; cachedPrefix = null
+            cloningFailed = true; base?.close(); base = null; cachedPrefix = null
             return generate(prefix + suffix)
         }
     }
