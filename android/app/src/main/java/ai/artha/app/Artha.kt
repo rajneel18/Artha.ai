@@ -90,11 +90,11 @@ class Artha : Application() {
     }
 
     /** Replaces the question with the outcome, then clears it. */
-    fun finishPurpose(id: Long, text: String) {
+    fun finishPurpose(id: Long, text: String, keep: Boolean = false) {
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val nm = NotificationManagerCompat.from(this)
         nm.notify(NOTIFY_BASE + id.toInt(), NotificationCompat.Builder(this, CH_DETECTED).setSmallIcon(R.drawable.ic_stat_rupee)
-            .setContentTitle("Artha").setContentText(text).setTimeoutAfter(4000).setSilent(true).build())
+            .setContentTitle("Artha").setContentText(text).setSilent(true).apply { if (!keep) setTimeoutAfter(5000) }.build())
     }
 
     companion object {

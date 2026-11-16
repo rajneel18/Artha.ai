@@ -52,15 +52,15 @@ category: one word-for-word choice from: ${categories.joinToString(", ")}. A pay
 ${memoryLine(known)}
 SMS: INR 640.00 spent on HDFC Bank Card XX4321 at UBER INDIA on 03-Nov-26. Avl Lmt: INR 90,000
 JSON: {"type": "debit", "amount": 640, "party": "Uber", "category": "Transport"}
-SMS: Rs.120.00 sent from A/c XX9012 to BIGBASKET via UPI on 02/11/26 Ref 22334455 - Kotak Bank
+SMS: Rs.120.00 sent from A/c XX9012 to BIGBASKET via UPI on 02/11/26 Ref 22334455
 JSON: {"type": "debit", "amount": 120, "party": "Bigbasket", "category": "Groceries"}
-SMS: A/c XX5566 credited with Rs.3,000.00 by vpa amit.joshi9@okhdfcbank on 01-11-2026. Avl Bal Rs 12,000 - SBI
+SMS: A/c XX5566 credited with Rs.3,000.00 by vpa amit.joshi9@okhdfcbank on 01-11-2026. Avl Bal Rs 12,000
 JSON: {"type": "credit", "amount": 3000, "party": "Amit Joshi", "category": "Transfers"}
-SMS: Your a/c XX5566 is debited for Rs.75.00 on 01-11-2026 and credited to vpa meera.k12@ybl. Balance INR 9000 - Axis Bank
+SMS: Your a/c XX5566 is debited for Rs.75.00 on 01-11-2026 and credited to vpa meera.k12@ybl. Balance INR 9000
 JSON: {"type": "debit", "amount": 75, "party": "Meera K", "category": "Transfers"}
-SMS: UPI AutoPay mandate for Spotify debit of Rs.119.00 is scheduled on 05-12-2026 - Canara Bank
+SMS: UPI AutoPay mandate for Spotify debit of Rs.119.00 is scheduled on 05-12-2026
 JSON: {"type": "upcoming", "amount": 119, "party": "Spotify", "category": "Entertainment"}
-SMS: Congratulations! You are eligible for a credit card with limit Rs.2,00,000. Apply now - HDFC Bank
+SMS: Congratulations! You are eligible for a credit card with limit Rs.2,00,000. Apply now
 JSON: {"type": "ignore", "amount": 0, "party": "", "category": "Other"}
 $SPLIT
 SMS: $sms
@@ -192,7 +192,7 @@ JSON:""".trimIndent()
 
     // Answers that name the user's own account, a card or bank, or a code instead of a real payee.
     private val NOT_A_PAYEE = listOf("your account", "your a/c", "account", "a/c", "self", "you", "customer", "cc payment", "cc payments",
-        "credit card", "card", "bank", "co-op", "slice", "hdfc", "icici", "sbi", "axis", "kotak", "saraswat", "idfc",
+        "credit card", "card", "bank", "co-op", "slice", "upi", "upi payment", "upi transfer", "vpa", "neft", "imps", "rtgs", "transfer", "payment", "hdfc", "icici", "sbi", "axis", "kotak", "saraswat", "idfc",
         "indusind", "federal", "rbl", "yes bank", "canara", "union bank", "bank of baroda", "pnb", "unknown")
     fun isNotAPayee(party: String): Boolean {
         val p = party.lowercase().trim()

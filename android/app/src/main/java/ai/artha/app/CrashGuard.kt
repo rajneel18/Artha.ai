@@ -16,7 +16,9 @@ object CrashGuard {
     fun install(c: Context) {
         val app = c.applicationContext
         // A marker left behind means the app died inside that step last time: disable it.
-        prefs(app).getString("in_step", null)?.let { step ->
+        // Older versions could switch the CPU path off after the phone simply stopped the app mid-read. Undo that.
+        prefs(app).edit().remove("off_cpu").apply()
+        prefs(app).getString("in_step", null)?.takeIf { it != "cpu" }?.let { step ->
             prefs(app).edit().putBoolean("off_$step", true).remove("in_step").apply()
             save(app, "The app stopped while running \"$step\" in the AI library. Artha switched to a safer mode for it.")
         }

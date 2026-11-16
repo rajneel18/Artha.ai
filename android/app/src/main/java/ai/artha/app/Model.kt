@@ -7,6 +7,7 @@ import com.google.mediapipe.tasks.genai.llminference.LlmInference
 import com.google.mediapipe.tasks.genai.llminference.LlmInferenceSession
 import com.google.mediapipe.tasks.genai.llminference.PromptTemplates
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * Qwen 2.5 1.5B running fully on the phone through MediaPipe.
@@ -25,6 +26,12 @@ class QwenModel(private val context: Context) : LocalModel {
     }
 
     private var engine: LlmInference? = null
+
+    /** All AI work runs on one low-priority thread (its helper threads inherit that), so the screen stays smooth. */
+    private val aiThread = Executors.newSingleThreadExecutor { r ->
+        Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); r.run() }, "artha-ai")
+    }
+    private fun <T> onAiThread(block: () -> T): T = aiThread.submit(java.util.concurrent.Callable { block() }).get()
     private var cachedPrefix: String? = null
     private var base: LlmInferenceSession? = null
     private val cloningWorks get() = !cloningFailed && !CrashGuard.isOff(context, "reuse")
@@ -51,14 +58,21 @@ class QwenModel(private val context: Context) : LocalModel {
         .setTopK(1).setTemperature(0f).setRandomSeed(1).setPromptTemplates(noTemplates).build())
 
     @Synchronized
-    override fun generate(prompt: String): String = CrashGuard.risky(context, if (CrashGuard.isOff(context, "gpu")) "cpu" else "gpu") {
-        val s = newSession()
-        try { s.addQueryChunk(USER + prompt + ASSISTANT); s.generateResponse() } finally { s.close() }
+    override fun generate(prompt: String): String = onAiThread {
+        val run = {
+            val s = newSession()
+            try { s.addQueryChunk(USER + prompt + ASSISTANT); s.generateResponse() } finally { s.close() }
+        }
+        if (CrashGuard.isOff(context, "gpu")) run() else CrashGuard.risky(context, "gpu", run)
     }
 
     @Synchronized
     override fun generate(prefix: String, suffix: String): String {
         if (!cloningWorks) return generate(prefix + suffix)
+        return onAiThread { generateReusing(prefix, suffix) }
+    }
+
+    private fun generateReusing(prefix: String, suffix: String): String {
         try {
             if (cachedPrefix != prefix || base == null) {
                 base?.close()
@@ -72,10 +86,12 @@ class QwenModel(private val context: Context) : LocalModel {
         } catch (e: Throwable) {
             Log.w("Artha", "Prefix reuse not supported here, using full prompts", e)
             cloningFailed = true; base?.close(); base = null; cachedPrefix = null
-            return generate(prefix + suffix)
+            val s = newSession()
+            return try { s.addQueryChunk(USER + prefix + suffix + ASSISTANT); s.generateResponse() } finally { s.close() }
         }
     }
 
     @Synchronized
-    fun release() { base?.close(); base = null; cachedPrefix = null; engine?.close(); engine = null }
+    /** Frees the model's memory once the current task (if any) is done. Never blocks the caller. */
+    fun release() { aiThread.execute { base?.close(); base = null; cachedPrefix = null; engine?.close(); engine = null } }
 }

@@ -140,6 +140,12 @@ class PaymentActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getLongExtra("id", -1); if (id < 0) return
         val purpose = androidx.core.app.RemoteInput.getResultsFromIntent(intent)?.getCharSequence(Artha.KEY_PURPOSE)?.toString()
+        // Android keeps the reply spinner going until the notification changes, so change it right away.
+        Artha.of(context).finishPurpose(id, when {
+            intent.action == Artha.ACTION_SKIP -> "Skipped"
+            !purpose.isNullOrBlank() -> "Got it: \"${purpose.trim().take(40)}\". Logging…"
+            else -> "Logging…"
+        }, keep = true)
         WorkManager.getInstance(context).enqueue(OneTimeWorkRequestBuilder<PurposeWorker>().setInputData(
             workDataOf("id" to id, "action" to (intent.action ?: ""), "purpose" to purpose)).build())
     }
