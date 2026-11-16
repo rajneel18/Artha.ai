@@ -48,7 +48,11 @@ class FakeModel(var ready: Boolean = true) : LocalModel {
     override fun generate(prompt: String): String {
         calls++; lastPrompt = prompt
         val tail = prompt.substringAfterLast("\nSMS: ").substringAfterLast("\nNote: ").substringAfterLast("\nRow: ").substringAfterLast("\nQuestion: ")
-        return answers.entries.firstOrNull { it.key in tail }?.value ?: """{"type": "ignore", "amount": 0, "party": "", "category": "Other"}"""
+        answers.entries.firstOrNull { it.key in tail }?.let { return it.value }
+        // The short "which category" question: answer with the category of a matching canned answer.
+        if ("Pick the spending category" in prompt) answers.entries.firstOrNull { it.key.lowercase() in prompt.lowercase() }?.let { a ->
+            Regex("\"category\":\\s*\"([^\"]+)\"").find(a.value)?.let { return "{\"category\": \"${it.groupValues[1]}\"}" } }
+        return """{"type": "ignore", "amount": 0, "party": "", "category": "Other"}"""
     }
 }
 
@@ -166,7 +170,8 @@ class EngineTest {
     @Test fun inventedAmountsAreNotTrusted() {
         model.answers["swiggy"] = """{"type": "debit", "amount": 950, "party": "Swiggy", "category": "Food & Dining"}"""
         receive("Rs.250.00 debited from A/c XX1 to VPA swiggy@icici UPI Ref 9")
-        assertEquals(0L, items().single()["confident"])
+        // The pattern reader takes the amount straight from the SMS, so the model's invented 950 never gets in.
+        assertEquals(250.0, items().single()["amount"] as Double, 0.0); assertEquals("Swiggy", items().single()["party"])
     }
 
     @Test fun logAllAndSkip() {
@@ -238,9 +243,9 @@ class EngineTest {
         val d = detected()
         assertEquals("confident payments are logged without asking", 5L, d["history_logged"])
         val groups = d["groups"] as List<Map<String, Any?>>
-        assertEquals(setOf("Ramesh Kirana" to 3L, "Unknown" to 1L), groups.map { it["party"] to it["count"] }.toSet())
+        assertEquals(setOf("Kirana" to 3L, "Unknown" to 1L), groups.map { it["party"] to it["count"] }.toSet())
         assertTrue("each group shows its messages", (groups.first()["samples"] as List<*>).isNotEmpty())
-        call("POST", "/api/detected/group", mapOf("party" to "Ramesh Kirana", "type" to "debit", "action" to "log", "category" to "Groceries"))
+        call("POST", "/api/detected/group", mapOf("party" to "Kirana", "type" to "debit", "action" to "log", "category" to "Groceries"))
         receive("Rs.120 paid to kirana Ref 99")
         assertEquals("Groceries", items().single()["category"])
         assertEquals(5L, (call("POST", "/api/detected/undo-history") as Map<String, Any?>)["removed"].let { (it as Long) - 3 })

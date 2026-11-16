@@ -2,8 +2,8 @@
 <resources>
     <style name="Theme.Artha" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowBackground">@color/bg</item>
-        <item name="colorPrimary">#D4AF4F</item>
-        <item name="colorAccent">#D4AF4F</item>
+        <item name="colorPrimary">#8FA352</item>
+        <item name="colorAccent">#8FA352</item>
     </style>
     <color name="bg">#0A0A0A</color>
     <color name="icon_bg">#1A1A1A</color>

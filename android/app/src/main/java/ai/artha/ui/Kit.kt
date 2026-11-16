@@ -47,20 +47,21 @@ data class Palette(
     val gold: Color, val goldSoft: Color, val onGold: Color, val green: Color, val red: Color, val dark: Boolean,
 )
 
+// Olive green accent on near-black (dark) or soft sage (light).
 val DarkGold = Palette(
-    bg = Color(0xFF0A0A0A), card = Color(0xFF1C1C1C), cardHi = Color(0xFF262626), line = Color(0xFF2B2B2B),
-    text = Color(0xFFF5F5F5), muted = Color(0xFF9A9A9A), gold = Color(0xFFD4AF4F), goldSoft = Color(0xFF3A3220),
-    onGold = Color(0xFF111111), green = Color(0xFF2ECC71), red = Color(0xFFEF6A5B), dark = true,
+    bg = Color(0xFF0A0C09), card = Color(0xFF191C16), cardHi = Color(0xFF22261E), line = Color(0xFF2C3127),
+    text = Color(0xFFF1F4EC), muted = Color(0xFF9CA392), gold = Color(0xFFA4B865), goldSoft = Color(0xFF283020),
+    onGold = Color(0xFF0F130A), green = Color(0xFF5CCB8F), red = Color(0xFFEF6A5B), dark = true,
 )
 val LightGold = Palette(
-    bg = Color(0xFFF6F1E7), card = Color(0xFFFFFDF8), cardHi = Color(0xFFF1E9DA), line = Color(0xFFE6DCC9),
-    text = Color(0xFF1F1A14), muted = Color(0xFF7D7062), gold = Color(0xFFA9812C), goldSoft = Color(0xFFF2E6CB),
-    onGold = Color(0xFFFFFDF8), green = Color(0xFF2E8B4F), red = Color(0xFFC0442F), dark = false,
+    bg = Color(0xFFF2F4EB), card = Color(0xFFFBFCF7), cardHi = Color(0xFFE9EDDF), line = Color(0xFFDCE2CE),
+    text = Color(0xFF1A1E14), muted = Color(0xFF6E7564), gold = Color(0xFF5F7530), goldSoft = Color(0xFFE2E9CF),
+    onGold = Color(0xFFFBFCF7), green = Color(0xFF2E8B57), red = Color(0xFFC0442F), dark = false,
 )
 val LocalPalette = staticCompositionLocalOf { DarkGold }
 val P: Palette @Composable get() = LocalPalette.current
 
-val GoldGradient: Brush @Composable get() = Brush.horizontalGradient(listOf(P.gold, if (P.dark) Color(0xFFE9DAA6) else Color(0xFFD9BE7C)))
+val GoldGradient: Brush @Composable get() = Brush.horizontalGradient(if (P.dark) listOf(Color(0xFF7E9446), Color(0xFFC3D38C)) else listOf(Color(0xFF55692A), Color(0xFF8DA352)))
 
 // ---------------- data access ----------------
 /** Calls the on-device engine off the main thread. Throws with a readable message on errors. */

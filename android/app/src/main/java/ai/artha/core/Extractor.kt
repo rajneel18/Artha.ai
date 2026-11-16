@@ -255,6 +255,37 @@ JSON:""".trimIndent()
         return when { mentionsMoneyOut(sms) -> "debit" to amount; trackReceived && onlyMoneyIn(sms) -> "credit" to amount; else -> null }
     }
 
+    // ---------- fast pattern reader for common bank SMS ----------
+    private val CURRENCY_AMOUNT = Regex("(?i)(?:rs\\.?|inr|₹)\\s*([0-9][0-9,]*(?:\\.\\d{1,2})?)")
+    private val END = "(?=\\s+(?:on|via|ref|upi|using|for|txn|dated|avl|from|is|has|thru|through)\\b|[.,;(]|\\s*$)"
+    private val PAYEE_OUT = Regex("(?i)\\b(?:at|to|towards|info:?)\\s+(?:vpa\\s+)?([A-Za-z][A-Za-z0-9 &.'-]{1,40}?)$END")
+    private val PAYEE_IN = Regex("(?i)\\b(?:from|by)\\s+(?:vpa\\s+)?([A-Za-z][A-Za-z0-9 &.'-]{1,40}?)$END")
+    private val MANDATE_FOR = Regex("(?i)\\b(?:mandate|autopay|si)\\b.{0,20}?\\bfor\\s+([A-Za-z][A-Za-z0-9 &.'-]{1,30}?)\\s+(?:debit|of|for|is|amount)\\b")
+
+    /** The transaction amount: the first currency amount that isn't a balance or a limit. */
+    fun patternAmount(text: String): Double? = CURRENCY_AMOUNT.findAll(text).firstOrNull { m ->
+        val before = text.substring(maxOf(0, m.range.first - 30), m.range.first).lowercase()
+        "bal" !in before && "limit" !in before && "lmt" !in before
+    }?.groupValues?.get(1)?.replace(",", "")?.toDoubleOrNull()?.takeIf { it > 0 }
+
+    /** Reads amount, direction and payee with patterns; null when any of them is unclear. */
+    fun patternRead(text: String, categories: List<String>, known: Map<String, String>, upcoming: Boolean): Item? {
+        val amount = patternAmount(text) ?: return null
+        val type = when { upcoming -> "upcoming"; mentionsMoneyOut(text) -> "debit"; onlyMoneyIn(text) -> "credit"; else -> return null }
+        val upi = upiId(text)
+        val party = when {
+            type == "upcoming" -> MANDATE_FOR.find(text)?.groupValues?.get(1)?.trim()
+            upi != null && isAnonymousUpi(upi) -> labelForUpi(upi)
+            upi != null -> nameFromUpiId(text)
+            type == "credit" -> PAYEE_IN.find(text)?.groupValues?.get(1)?.trim()
+            else -> PAYEE_OUT.findAll(text).map { it.groupValues[1].trim() }.firstOrNull { !isNotAPayee(it) }
+        }?.let { titleCase(it.trimEnd('.', '-', ' ')) }?.takeIf { it.length >= 2 && (isPlaceholder(it) || !isNotAPayee(it)) } ?: return null
+        // Category: what you taught Artha first, then a short AI question (only if the model is ready).
+        val cat = known.entries.firstOrNull { it.key.equals(party, true) }?.value
+            ?: if (isPlaceholder(party)) "Other" else (if (model.available()) categoryFor(party, party, categories) else null) ?: "Other"
+        return Item(type, amount, party, null, cat, confident = !isPlaceholder(party))
+    }
+
     /** "shravani.shinde109-1@okicici" -> "Shravani Shinde": the name part of a UPI ID, by plain text cutting. */
     fun nameFromUpiId(sms: String): String? {
         val token = sms.split(' ', '(', ')', ',', ';').firstOrNull { '@' in it && it.indexOf('@') > 1 } ?: return null
@@ -270,8 +301,12 @@ JSON:""".trimIndent()
         if (safety?.first == "ignore") return Verdict(Item("ignore", 0.0, "", null, "Other", true), safety.second)
         if (!trackReceived && onlyMoneyIn(sms)) return Verdict(Item("ignore", 0.0, "", null, "Other", true), "Money received isn't tracked (Settings)")
         val clean = withoutSignature(sms)
-        val (prefix, suffix) = smsPromptParts(clean, categories, known)
-        var item = askSplit(prefix, suffix)?.let { toItem(it, clean, categories) } ?: return Verdict(null, "The AI couldn't read this message")
+        // Fast path: patterns read the usual bank formats instantly; the AI only picks the category (short prompt).
+        // Anything the patterns can't fully read goes to the AI as before.
+        var item = patternRead(clean, categories, known, safety?.first == "upcoming") ?: run {
+            val (prefix, suffix) = smsPromptParts(clean, categories, known)
+            askSplit(prefix, suffix)?.let { toItem(it, clean, categories) }
+        } ?: return Verdict(null, "The AI couldn't read this message")
         // A shop QR or a phone number: the SMS doesn't say who it is, so use a clear label and ask you once.
         val upi = upiId(clean)
         if (item.type != "ignore" && upi != null && isAnonymousUpi(upi)) item = item.copy(party = labelForUpi(upi), confident = false)
