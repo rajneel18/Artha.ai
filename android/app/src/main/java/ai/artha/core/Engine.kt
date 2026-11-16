@@ -189,6 +189,41 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         )
     }
 
+    // ---------------- daily budget ----------------
+    /** The daily budget that applied on each day (changes count from the day you made them). */
+    private fun allowanceLookup(): (String) -> Double {
+        val history = db.query("SELECT start_date, amount FROM allowance_history ORDER BY start_date").map { it.s("start_date")!! to it.d("amount")!! }
+        val def = (settings()["daily_allowance"] as Number).toDouble()
+        return { day -> var a = history.firstOrNull()?.second ?: def; for ((d, v) in history) if (d <= day) a = v else break; a }
+    }
+
+    /**
+     * One day's log: its budget, what you spent (excluded categories don't count) and the payments,
+     * plus a strip of the last [span] days so you can jump between them.
+     */
+    fun daily(date: LocalDate, span: Int = 60): Map<String, Any?> {
+        ensureStarted()
+        val t = today(); val day = clampDate(date)
+        val allowance = allowanceLookup(); val ex = excluded()
+        val from = minOf(t.minusDays(span.toLong() - 1), day)
+        val spend = db.query("SELECT date, SUM($SPEND) AS t FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ? " +
+            "AND category NOT IN (${inClause(ex.size)}) GROUP BY date", from.toString(), t.toString(), *ex.toTypedArray())
+            .associate { it.s("date")!! to round2(it.d("t") ?: 0.0) }
+        val zero = try { db.query("SELECT date FROM zero_days WHERE date >= ?", from.toString()).mapNotNull { it.s("date") }.toSet() } catch (_: Exception) { emptySet() }
+        val strip = generateSequence(from) { it.plusDays(1) }.takeWhile { !it.isAfter(t) }.map { d ->
+            val k = d.toString(); val a = allowance(k); val sp = spend[k] ?: 0.0
+            mapOf("date" to k, "spent" to sp, "allowance" to a,
+                "state" to when { sp > a -> "over"; sp > 0 -> "under"; k in zero -> "zero"; d == t -> "today"; else -> "empty" })
+        }.toList()
+        val a = allowance(day.toString()); val sp = spend[day.toString()] ?: 0.0
+        val txs = db.query("SELECT * FROM transactions WHERE date=? ORDER BY id DESC", day.toString())
+        val week = strip.takeLast(7)
+        return mapOf("date" to day.toString(), "allowance" to a, "spent" to sp, "left" to round2(a - sp),
+            "counted_categories_excluded" to ex, "transactions" to txs, "days" to strip,
+            "week_spent" to round2(week.sumOf { it["spent"] as Double }), "week_allowance" to round2(week.sumOf { it["allowance"] as Double }),
+            "suggested" to round2((settings()["monthly_budget"] as? Number)?.toDouble()?.div(t.lengthOfMonth()) ?: a))
+    }
+
     // ---------------- ledger ----------------
     private fun learned(): Map<String, String> = db.query("SELECT merchant, category FROM merchant_rules").associate { it.s("merchant")!! to it.s("category")!! }
 

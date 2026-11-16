@@ -35,7 +35,8 @@ fun EnvelopePicker(selected: Long?, onPick: (Long?) -> Unit) {
 }
 
 @Composable
-fun AddExpenseSheet(onDone: () -> Unit) {
+fun AddExpenseSheet(date: java.time.LocalDate? = null, onDone: () -> Unit) {
+    var day by remember { mutableStateOf(date ?: java.time.LocalDate.now()) }
     var mode by remember { mutableIntStateOf(0) }
     val act = rememberAct(); val toast = LocalToast.current; val native = LocalNative.current; val nav = LocalNav.current
     var text by remember { mutableStateOf("") }
@@ -44,7 +45,8 @@ fun AddExpenseSheet(onDone: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     Sheet(onDone) {
         Text("Add expense", style = T.title, color = P.text); Spacer(Modifier.height(14.dp))
-        Segmented(listOf("Quick", "Manual"), mode) { mode = it }; Spacer(Modifier.height(16.dp))
+        Segmented(listOf("Quick", "Manual"), mode) { mode = it }; Spacer(Modifier.height(14.dp))
+        DayChooser(day) { day = it }; Spacer(Modifier.height(14.dp))
         if (mode == 0) {
             Field(text, { text = it }, "chai 40, auto 120, groceries 850")
             Text("Say several at once. Hinglish works too: \"200 chai aur 50 auto\".", style = T.small, color = P.muted, modifier = Modifier.padding(top = 8.dp))
@@ -63,6 +65,7 @@ fun AddExpenseSheet(onDone: () -> Unit) {
                 busy = true
                 act {
                     pendingQuick = call("POST", "/api/parse", mapOf("text" to text)) as List<Map<String, Any?>>
+                    pendingQuickDay = day
                     nav.go("quick")
                 }
                 onDone()
@@ -76,9 +79,9 @@ fun AddExpenseSheet(onDone: () -> Unit) {
             GoldButton("Save", enabled = (amount.toDoubleOrNull() ?: 0.0) > 0) {
                 act {
                     @Suppress("UNCHECKED_CAST")
-                    val tx = call("POST", "/api/transactions", mapOf("amount" to amount.toDouble(), "merchant" to merchant.ifBlank { "Cash" }, "category" to (category ?: "Other"))) as? Map<String, Any?>
+                    val tx = call("POST", "/api/transactions", mapOf("amount" to amount.toDouble(), "merchant" to merchant.ifBlank { "Cash" }, "category" to (category ?: "Other"), "date" to day.toString())) as? Map<String, Any?>
                     if (envelope != null && tx != null) call("POST", "/api/transactions/${tx.l("id")}/envelope", mapOf("envelope_id" to envelope))
-                    toast.show("Saved ${rupees(amount.toDouble())}")
+                    toast.show("Saved ${rupees(amount.toDouble())} to ${shortDay(day).lowercase().replaceFirstChar { it.uppercase() }}")
                 }
                 onDone()
             }
@@ -88,6 +91,8 @@ fun AddExpenseSheet(onDone: () -> Unit) {
 
 /** Results from Quick Add waiting on the review page. */
 var pendingQuick by mutableStateOf<List<Map<String, Any?>>>(emptyList())
+/** The day chosen in the add sheet for those results. */
+var pendingQuickDay by mutableStateOf(java.time.LocalDate.now())
 
 @Composable
 fun TxSheet(id: Long, onDone: () -> Unit) {
@@ -98,9 +103,10 @@ fun TxSheet(id: Long, onDone: () -> Unit) {
     var category by remember(t) { mutableStateOf(t.s("category")) }
     var envelope by remember(t) { mutableStateOf((t["envelope_id"] as? Number)?.toLong()) }
     var people by remember { mutableStateOf("") }
+    var day by remember(t) { mutableStateOf(try { java.time.LocalDate.parse(t.s("date").take(10)) } catch (_: Exception) { java.time.LocalDate.now() }) }
     Sheet(onDone) {
-        Text(dayLabel(t.s("date")), style = T.label, color = P.muted)
-        Spacer(Modifier.height(8.dp))
+        DayChooser(day) { day = it }
+        Spacer(Modifier.height(12.dp))
         Field(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, "₹0", number = true, big = true); Spacer(Modifier.height(10.dp))
         Field(merchant, { merchant = it }, "Merchant"); Spacer(Modifier.height(14.dp))
         CategoryPicker(category) { category = it }
@@ -109,7 +115,7 @@ fun TxSheet(id: Long, onDone: () -> Unit) {
         Spacer(Modifier.height(16.dp))
         GoldButton("Save") {
             act {
-                call("PATCH", "/api/transactions/$id", mapOf("merchant" to merchant, "amount" to (amount.toDoubleOrNull() ?: t.d("amount")), "category" to category))
+                call("PATCH", "/api/transactions/$id", mapOf("merchant" to merchant, "amount" to (amount.toDoubleOrNull() ?: t.d("amount")), "category" to category, "date" to day.toString()))
                 call("POST", "/api/transactions/$id/envelope", mapOf("envelope_id" to envelope))
                 toast.show("Saved. Artha will remember $merchant as $category")
             }

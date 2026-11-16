@@ -166,6 +166,7 @@ private fun Page(name: String) {
         "settings" -> SettingsPage()
         "detected" -> DetectedPage()
         "quick" -> QuickAddPage()
+        "daily" -> DailyPage()
         "categories" -> CategoryBudgetsPage()
         "all" -> Column(Modifier.fillMaxSize()) { PageHeader("Transactions"); TransactionsTab() }
         else -> Box(Modifier.fillMaxSize())

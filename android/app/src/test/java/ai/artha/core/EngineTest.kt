@@ -289,6 +289,19 @@ class EngineTest {
         assertEquals("Chai", r["merchant"]); assertEquals("Snacks", r["category"])
     }
 
+    @Test fun dailyLogForAnyDay() {
+        call("PUT", "/api/settings", mapOf("daily_allowance" to 300))
+        call("POST", "/api/transactions", mapOf("amount" to 120, "merchant" to "Chai Stall", "category" to "Snacks", "date" to today.minusDays(3).toString()))
+        call("POST", "/api/transactions", mapOf("amount" to 450, "merchant" to "Dinner", "category" to "Food & Dining", "date" to today.minusDays(3).toString()))
+        call("POST", "/api/transactions", mapOf("amount" to 50, "merchant" to "Auto", "category" to "Transport"))
+        val d = call("GET", "/api/daily?date=${today.minusDays(3)}") as Map<String, Any?>
+        assertEquals(570.0, d["spent"] as Double, 0.0); assertEquals(-270.0, d["left"] as Double, 0.0)
+        assertEquals(2, (d["transactions"] as List<*>).size)
+        val strip = (d["days"] as List<Map<String, Any?>>).associateBy { it["date"] }
+        assertEquals("over", strip[today.minusDays(3).toString()]!!["state"]); assertEquals("under", strip[today.toString()]!!["state"])
+        assertEquals(50.0, (call("GET", "/api/daily") as Map<String, Any?>)["spent"] as Double, 0.0)
+    }
+
     @Test fun answerWhatWasItFor() {
         receive(SARASWAT_DEBIT)
         model.answers["Purpose: lunch"] = """{"category": "Food & Dining"}"""

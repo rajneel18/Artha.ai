@@ -44,6 +44,7 @@ fun HomeTab() {
         st["crash_report"]?.let { item { CrashCard(it.toString()) } }
         if (st["model_ready"] != true || st["sms"] != true) item { SetupCard(st) }
         item { DetectedSummary(det, review) }
+        item { TodayCard() }
         item { MonthlySpend(pace) }
         item { StreakCard(streak) }
         item { Tools() }
@@ -190,7 +191,7 @@ private fun StreakCard(s: Map<String, Any?>?) {
 private fun Tools() {
     val nav = LocalNav.current
     SectionTitle("Tools")
-    val tools = listOf(Triple("Log Your Day", "list", "quick"), Triple("Ask Artha", "chat", "ask"), Triple("Money Story", "sparkle", "story"),
+    val tools = listOf(Triple("Daily Log", "list", "daily"), Triple("Ask Artha", "chat", "ask"), Triple("Money Story", "sparkle", "story"),
         Triple("Envelopes", "envelope", "envelopes"), Triple("Recurring", "repeat", "recurring"), Triple("Budgets", "sliders", "categories"))
     tools.chunked(3).forEach { row ->
         Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

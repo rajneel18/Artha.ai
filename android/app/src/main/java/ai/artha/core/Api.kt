@@ -99,6 +99,7 @@ class Api(val engine: Engine, val model: LocalModel) {
             m == "GET" && p == listOf("settings") -> engine.settings().apply { this["model_ready"] = model.available() }
             m == "PUT" && p == listOf("settings") -> putSettings(b)
             m == "GET" && p == listOf("budget") -> engine.budgetStatus()
+            m == "GET" && p == listOf("daily") -> engine.daily(q["date"]?.let { LocalDate.parse(it) } ?: today())
             m == "GET" && p == listOf("summary") -> summary(month(q))
 
             // ---- rules ----

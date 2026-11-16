@@ -126,9 +126,11 @@ fun QuickAddPage() {
     val act = rememberAct(); val toast = LocalToast.current; val nav = LocalNav.current
     val rows = remember { mutableStateListOf<MutableMap<String, Any?>>().apply { addAll(pendingQuick.map { it.toMutableMap() }) } }
     var text by remember { mutableStateOf("") }
+    var day by remember { mutableStateOf(pendingQuickDay) }
     PageList("Log Your Day") {
         item {
             Text("Describe everything you spent on, all in one go.", style = T.body, color = P.muted); Spacer(Modifier.height(10.dp))
+            DayChooser(day) { day = it }; Spacer(Modifier.height(10.dp))
             Field(text, { text = it }, "chai 40, auto 120, groceries 850"); Spacer(Modifier.height(10.dp))
             GhostButton("Read it", Modifier.fillMaxWidth(), P.gold) {
                 act { @Suppress("UNCHECKED_CAST") val r = call("POST", "/api/parse", mapOf("text" to text)) as List<Map<String, Any?>>
@@ -151,8 +153,8 @@ fun QuickAddPage() {
             Spacer(Modifier.height(18.dp))
             GoldButton("Save all ${rows.size}") {
                 val save = rows.toList()
-                act { save.forEach { r -> call("POST", "/api/transactions", mapOf("amount" to r.d("amount"), "merchant" to r.s("party"), "category" to r.s("category"), "date" to r.s("date"))) }
-                    toast.show("Saved ${save.size}"); pendingQuick = emptyList() }
+                act { save.forEach { r -> call("POST", "/api/transactions", mapOf("amount" to r.d("amount"), "merchant" to r.s("party"), "category" to r.s("category"), "date" to day.toString())) }
+                    toast.show("Saved ${save.size} to ${shortDay(day)}"); pendingQuick = emptyList(); pendingQuickDay = LocalDate.now() }
                 nav.back()
             }
         }
