@@ -16,6 +16,9 @@ class AndroidDb(context: Context) : Db {
         SupportSQLiteOpenHelper.Configuration.builder(context).name("artha.db").callback(object : SupportSQLiteOpenHelper.Callback(1) {
             override fun onCreate(db: SupportSQLiteDatabase) {}
             override fun onUpgrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
+            // The engine manages its own tables. Never refuse to open (or drop) a database over the version number:
+            // v2.2 to v2.3.1 wrote 3 there by mistake.
+            override fun onDowngrade(db: SupportSQLiteDatabase, oldVersion: Int, newVersion: Int) {}
             override fun onConfigure(db: SupportSQLiteDatabase) {
                 db.setForeignKeyConstraintsEnabled(true)
                 db.query("PRAGMA secure_delete = ON").close() // deleted rows are overwritten, not just unlinked

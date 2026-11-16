@@ -53,18 +53,17 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
                 tx_id INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE, person TEXT NOT NULL,
                 amount REAL NOT NULL, settled INTEGER NOT NULL DEFAULT 0, settled_at TEXT)""",
         ).forEach { db.exec(it) }
-        val version = (db.scalar("PRAGMA user_version") as? Number)?.toInt() ?: 0
-        if (version < 2) {
-            // v2.2: earlier versions sometimes named the bank as the payee. Re-read those once (only ones not logged yet).
-            db.exec("UPDATE detected SET status='pending' WHERE status='analyzed' AND (lower(party) LIKE '%bank%' OR lower(party) LIKE '%co-op%')")
-            db.exec("PRAGMA user_version = 2")
-        }
+        // Our own clean-up version lives in its own table. Never use PRAGMA user_version: Android's database
+        // helper owns it, and changing it makes Android refuse to open the database.
+        db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        val version = (db.scalar("SELECT value FROM meta WHERE key='cleanup_version'") as? String)?.toIntOrNull() ?: 0
         if (version < 3) {
-            // v2.3: re-read items named after an account/card/code, and hide received money (now off by default).
-            db.exec("UPDATE detected SET status='pending' WHERE status='analyzed' AND (lower(party) LIKE '%account%' OR lower(party) LIKE '%bank%' " +
-                "OR lower(party) LIKE '%slice%' OR lower(party) LIKE '%cc payment%' OR length(party) < 4)")
+            // Earlier versions sometimes named the bank, the account or a code as the payee: re-read those (not yet logged).
+            db.exec("UPDATE detected SET status='pending' WHERE status='analyzed' AND (lower(party) LIKE '%bank%' OR lower(party) LIKE '%co-op%' " +
+                "OR lower(party) LIKE '%account%' OR lower(party) LIKE '%slice%' OR lower(party) LIKE '%cc payment%' OR length(party) < 4)")
+            // Received money is off by default now.
             db.exec("UPDATE detected SET status='skipped', reason='Money received isn''t tracked (Settings)' WHERE status IN ('analyzed','pending') AND type='credit'")
-            db.exec("PRAGMA user_version = 3")
+            db.exec("INSERT INTO meta(key, value) VALUES('cleanup_version', '3') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         }
     }
 
