@@ -43,7 +43,7 @@ fun TransactionsTab() {
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf<String?>(null) }
     var filters by remember { mutableStateOf(false) }
-    val cats = load { list("/api/categories").map { it.toString() } } ?: emptyList()
+    val cats = load { (call("GET", "/api/categories") as List<*>).map { it.toString() } } ?: emptyList()
     val all = load { call("GET", "/api/transactions?limit=1000") as List<Map<String, Any?>> } ?: emptyList()
     val shown = all.filter { t -> (category == null || t.s("category") == category) &&
         (query.isBlank() || listOf("merchant", "category", "note").any { t.s(it).contains(query.trim(), ignoreCase = true) } || t.s("amount").startsWith(query.trim())) }

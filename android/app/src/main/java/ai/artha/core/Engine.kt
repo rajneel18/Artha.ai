@@ -68,6 +68,16 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             db.exec("UPDATE detected SET status='skipped', reason='Money received isn''t tracked (Settings)' WHERE status IN ('analyzed','pending') AND type='credit'")
             db.exec("INSERT INTO meta(key, value) VALUES('cleanup_version', '3') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         }
+        if (version < 4) {
+            // Replies used to go only into the note ("Chai (Bhqr)"). Make the reply the name and re-pick the category.
+            for (t in db.query("SELECT id, merchant, note, category FROM transactions WHERE note LIKE '% (%)'")) {
+                if (!needsName(t.s("merchant"))) continue
+                val reply = t.s("note")!!.substringBeforeLast(" (").trim().takeIf { it.isNotEmpty() && it.length <= 60 } ?: continue
+                val cat = Categorizer.hint(reply) ?: t.s("category")
+                db.exec("UPDATE transactions SET merchant=?, category=?, note=? WHERE id=?", titleCase(reply), cat, reply, t.l("id"))
+            }
+            db.exec("INSERT INTO meta(key, value) VALUES('cleanup_version', '4') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        }
     }
 
     // ---------------- settings & budget ----------------
@@ -420,7 +430,13 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             .associate { it.s("w")!! to round2(it.d("t")!!) }
         return mapOf("month" to month, "spent" to round2(byCat.values.sum()), "received" to round2(received), "by_category" to byCat,
             "transactions" to db.count("SELECT COUNT(*) FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ?", lo, hi),
-            "top_merchants" to top, "by_weekday" to weekday)
+            "top_merchants" to top, "by_weekday" to weekday,
+            "biggest" to db.one("SELECT merchant, $SPEND AS amount, date FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ? ORDER BY 2 DESC LIMIT 1", lo, hi)
+                ?.let { mapOf("merchant" to it.s("merchant"), "amount" to round2(it.d("amount") ?: 0.0), "date" to it.s("date")) },
+            "most_visited" to db.query("SELECT merchant, COUNT(*) AS c, SUM($SPEND) AS t FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ? " +
+                "GROUP BY lower(merchant) ORDER BY c DESC, t DESC LIMIT 10", lo, hi).firstOrNull { !needsName(it.s("merchant")) }
+                ?.let { mapOf("merchant" to it.s("merchant"), "count" to it.l("c"), "total" to round2(it.d("t") ?: 0.0)) },
+            "active_days" to db.count("SELECT COUNT(DISTINCT date) FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ?", lo, hi))
     }
 
     private fun rupees(x: Double): String = "₹" + java.text.NumberFormat.getIntegerInstance(java.util.Locale("en", "IN")).format(x.roundToLong())
@@ -447,7 +463,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             if (p > 0 && v > p * 1.3 && v - p > 500) out += "$c is up ${rupees(v - p)} compared with $period."
         }
         cc.maxByOrNull { it.value }?.let { out += "Biggest category: ${it.key} at ${rupees(it.value)} (${(it.value / curSpent * 100).roundToLong()}% of spending)." }
-        (cur["top_merchants"] as List<Map<String, Any?>>).firstOrNull()?.let {
+        (cur["top_merchants"] as List<Map<String, Any?>>).firstOrNull { !needsName(it["merchant"] as? String) }?.let {
             val c = it["count"] as Long
             out += "You paid ${it["merchant"]} $c time${if (c > 1) "s" else ""}, ${rupees(it["total"] as Double)} in total."
         }
@@ -455,9 +471,6 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             val names = listOf("Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays")
             out += "You spend the most on ${names[it.key.toInt()]}."
         }
-        val b = budgetStatus()
-        out += "Savings Pool: ${rupees(b["savings_pool"] as Double)} since ${b["since"]}" +
-            (if ((b["days_over_budget"] as Int) > 0) ", over budget on ${b["days_over_budget"]} day(s)." else ".")
         return out
     }
 
@@ -759,7 +772,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         return tx
     }
 
-    private fun isPlaceholder(p: String?) = p == null || p == "Unknown" || p.startsWith("UPI ") || p.endsWith("QR shop") || p == "GPay merchant"
+    private fun isPlaceholder(p: String?) = needsName(p)
 
     /** Remembers who a UPI ID is, so the next payment to it is named and categorized without the AI. */
     fun rememberPayee(upi: String?, name: String, category: String) {
@@ -792,7 +805,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         val why = if (unnamed && ',' in purpose) purpose.substringAfter(',').trim() else purpose.trim()
         val party = who ?: r.s("party") ?: "Unknown"
         val cat = ex.categoryFor(why.ifEmpty { party }, party, allCategories()) ?: r.s("category") ?: "Other"
-        val note = "${why.take(120)} ($party)"
+        val note = if (why.equals(party, true) || why.isEmpty()) party else "${why.take(120)} ($party)"
         return if (r.s("status") == "logged" && r.l("tx_id") != null) {
             val txId = r.l("tx_id")!!
             setCategory(txId, cat); db.exec("UPDATE transactions SET note=?, merchant=? WHERE id=?", note, party, txId)

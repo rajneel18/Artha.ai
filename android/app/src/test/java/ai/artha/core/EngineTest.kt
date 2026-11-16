@@ -160,7 +160,7 @@ class EngineTest {
         assertEquals(1, (d["skipped"] as List<*>).size)                         // OTP: never a payment
         val upcoming = (d["items"] as List<Map<String, Any?>>).single()
         assertEquals("upcoming", upcoming["type"]); assertEquals("Netflix", upcoming["party"])
-        assertEquals(1, model.calls)                                             // the OTP never even reached the model
+        assertEquals(0, model.calls)                                             // OTP never reaches the model; "Netflix" is a known word
         call("POST", "/api/detected/${upcoming["id"]}", mapOf("action" to "log"))
         assertTrue("an upcoming mandate is not spending", txs().isEmpty())
         val subs = (call("GET", "/api/subscriptions") as Map<String, Any?>)["subscriptions"] as List<Map<String, Any?>>
@@ -234,19 +234,19 @@ class EngineTest {
 
     @Test fun importedHistoryLogsConfidentAndGroupsTheRest() {
         model.answers["swiggy"] = """{"type": "debit", "amount": 250, "party": "Swiggy", "category": "Food & Dining"}"""
-        model.answers["kirana"] = """{"type": "debit", "amount": 120, "party": "Ramesh Kirana", "category": "Other"}"""
+        model.answers["ramesh"] = """{"type": "debit", "amount": 120, "party": "Ramesh Traders", "category": "Other"}"""
         model.answers["account"] = """{"type": "debit", "amount": 90, "party": "Your Account", "category": "Transfers"}"""
         for (i in 1..5) api.captureSms("Rs.250 paid to swiggy Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
-        for (i in 1..3) api.captureSms("Rs.120 paid to kirana Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
+        for (i in 1..3) api.captureSms("Rs.120 paid to ramesh Ref $i", "AX-HDFCBK", now.minusDays(i.toLong()), history = true)
         api.captureSms("Rs.90 debited from your account Ref 7", "AX-HDFCBK", now.minusDays(2), history = true)
         while (engine.analyzeNext(api.extractor)) {}
         val d = detected()
         assertEquals("confident payments are logged without asking", 5L, d["history_logged"])
         val groups = d["groups"] as List<Map<String, Any?>>
-        assertEquals(setOf("Kirana" to 3L, "Unknown" to 1L), groups.map { it["party"] to it["count"] }.toSet())
+        assertEquals(setOf("Ramesh" to 3L, "Unknown" to 1L), groups.map { it["party"] to it["count"] }.toSet())
         assertTrue("each group shows its messages", (groups.first()["samples"] as List<*>).isNotEmpty())
-        call("POST", "/api/detected/group", mapOf("party" to "Kirana", "type" to "debit", "action" to "log", "category" to "Groceries"))
-        receive("Rs.120 paid to kirana Ref 99")
+        call("POST", "/api/detected/group", mapOf("party" to "Ramesh", "type" to "debit", "action" to "log", "category" to "Groceries"))
+        receive("Rs.120 paid to ramesh Ref 99")
         assertEquals("Groceries", items().single()["category"])
         assertEquals(5L, (call("POST", "/api/detected/undo-history") as Map<String, Any?>)["removed"].let { (it as Long) - 3 })
     }
@@ -256,6 +256,37 @@ class EngineTest {
         assertTrue(items().isEmpty()); assertEquals(0, model.calls)
         receive("Rs 13,428.00 blocked in your a/c XX6196 for IPO of Jio Platforms Ltd - Saraswat Co-op Bank Ltd.")
         assertTrue("IPO blocks aren't spending or income", items().isEmpty())
+    }
+
+    @Test fun everydayWordsPickTheCategoryWithoutTheAi() {
+        assertEquals("Snacks", Categorizer.hint("Chai"))
+        assertEquals("Fuel", Categorizer.hint("petrol"))
+        assertEquals("Transfers", Categorizer.hint("Mom"))
+        assertEquals("Groceries", Categorizer.hint("sabzi from market"))
+        assertEquals(null, Categorizer.hint("xyz"))
+        assertTrue(needsName("Bhqr")); assertTrue(needsName("UPI")); assertTrue(needsName("Unknown")); assertTrue(needsName("Paytm QR shop"))
+        assertTrue(!needsName("Mom")); assertTrue(!needsName("College Canteen")); assertTrue(!needsName("Shravani Shinde"))
+    }
+
+    @Test fun replyNamesAnUnnamedPayeeAndPicksSnacks() {
+        model.answers["bhqr"] = """{"type": "debit", "amount": 115, "party": "Bhqr", "category": "Shopping"}"""
+        receive(QR_115)
+        val id = engine.db.one("SELECT id FROM detected")!!["id"] as Long
+        val before = model.calls
+        val tx = call("POST", "/api/detected/$id", mapOf("action" to "purpose", "purpose" to "Chai")) as Map<String, Any?>
+        assertEquals("Chai", tx["merchant"]); assertEquals("Snacks", tx["category"])
+        assertEquals("no AI needed for chai", before, model.calls)
+    }
+
+    @Test fun oldRepliesAreFixedOnUpdate() {
+        val db = JdbcDb()
+        val e1 = Engine(db) { today }
+        val id = e1.record(today, 20.0, "debit", "Bhqr", "x", "sms", "Other")!!["id"] as Long
+        db.exec("UPDATE transactions SET note='Chai (Bhqr)' WHERE id=?", id)
+        db.exec("UPDATE meta SET value='3' WHERE key='cleanup_version'")
+        Engine(db) { today }
+        val r = db.one("SELECT merchant, category FROM transactions WHERE id=?", id)!!
+        assertEquals("Chai", r["merchant"]); assertEquals("Snacks", r["category"])
     }
 
     @Test fun answerWhatWasItFor() {

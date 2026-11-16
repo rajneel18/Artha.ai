@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.dp
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 fun CategoryPicker(selected: String?, onPick: (String) -> Unit) {
-    val cats = load { list("/api/categories").map { it.toString() } } ?: emptyList()
+    val cats = load { (call("GET", "/api/categories") as List<*>).map { it.toString() } } ?: emptyList()
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         cats.forEach { c -> Pill(c, c == selected) { onPick(c) } }
     }

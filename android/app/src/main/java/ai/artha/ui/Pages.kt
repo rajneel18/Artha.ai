@@ -195,12 +195,22 @@ fun StoryPage() {
     @Suppress("UNCHECKED_CAST") val stats = ins?.get("stats") as? Map<String, Any?>
     @Suppress("UNCHECKED_CAST") val tips = (ins?.get("insights") as? List<String>) ?: emptyList()
     @Suppress("UNCHECKED_CAST") val top = (stats?.get("by_category") as? Map<String, Double>)?.maxByOrNull { it.value }
+    val spent = stats?.d("spent") ?: 0.0
+    val count = stats?.l("transactions") ?: 0L
+    val day = LocalDate.now().dayOfMonth
+    @Suppress("UNCHECKED_CAST") val cats = (stats?.get("by_category") as? Map<String, Double>).orEmpty().entries.sortedByDescending { it.value }
+    @Suppress("UNCHECKED_CAST") val fav = stats?.get("most_visited") as? Map<String, Any?>
+    @Suppress("UNCHECKED_CAST") val big = stats?.get("biggest") as? Map<String, Any?>
+    fun times(n: Long) = if (n == 1L) "once" else if (n == 2L) "twice" else "$n times"
     val pages = listOfNotNull(
-        "This month so far" to rupees0(stats?.d("spent") ?: 0.0),
-        top?.let { "Most went to" to "${it.key}\n${rupees0(it.value)}" },
-        stats?.list("top_merchants")?.firstOrNull()?.let { "Your favourite place" to "${it.s("merchant")}\n${it.l("count")} visits" },
+        "This month so far" to "${rupees0(spent)}\n${count} payment${if (count == 1L) "" else "s"} in $day day${if (day == 1) "" else "s"}",
+        top?.let { "Most went to" to "${it.key}\n${rupees0(it.value)}, ${if (spent > 0) (it.value / spent * 100).toInt() else 0}% of everything" },
+        cats.drop(1).take(3).takeIf { it.isNotEmpty() }?.let { r -> "Then came" to r.joinToString("\n") { "${it.key}  ${rupees0(it.value)}" } },
+        fav?.let { "Your favourite place" to "${it.s("merchant")}\nYou went ${times(it.l("count") ?: 0L)}, ${rupees0(it.d("total") ?: 0.0)}" },
+        big?.takeIf { !it.s("merchant").isNullOrBlank() }?.let { "Biggest single spend" to "${rupees0(it.d("amount") ?: 0.0)}\n${it.s("merchant")}" },
+        (spent / day).takeIf { spent > 0 }?.let { "An average day" to "${rupees0(it)}\nspent each day so far" },
         pace?.let { "Where it's heading" to it.s("headline") },
-        streak?.let { "Your streak" to "${it.l("current")} days\nbest ${it.l("best")}" },
+        streak?.let { val c = it.l("current") ?: 0L; "Your streak" to "$c day${if (c == 1L) "" else "s"}\nbest ${it.l("best")}" },
     ) + tips.take(3).map { "Worth knowing" to it }
     val pager = rememberPagerState { pages.size }
     Column(Modifier.fillMaxSize()) {
@@ -343,7 +353,7 @@ fun CategoryBudgetsPage() {
     @Suppress("UNCHECKED_CAST") val limits = (settings?.get("category_limits") as? Map<String, Any?>)?.mapValues { (it.value as? Number)?.toDouble() ?: 0.0 } ?: emptyMap()
     @Suppress("UNCHECKED_CAST") val spent = ((ins?.get("stats") as? Map<String, Any?>)?.get("by_category") as? Map<String, Double>) ?: emptyMap()
     @Suppress("UNCHECKED_CAST") val recs = ((ins?.get("recommendations") as? Map<String, Any?>)?.get("categories") as? List<Map<String, Any?>>)?.associateBy { it.s("category") } ?: emptyMap()
-    val cats = load { list("/api/categories").map { it.toString() } } ?: emptyList()
+    val cats = load { (call("GET", "/api/categories") as List<*>).map { it.toString() } } ?: emptyList()
     var editing by remember { mutableStateOf<String?>(null) }
     PageList("Budgets") {
         item { Text("Monthly limits per category. They reset on the 1st.", style = T.body, color = P.muted, modifier = Modifier.padding(bottom = 12.dp)) }

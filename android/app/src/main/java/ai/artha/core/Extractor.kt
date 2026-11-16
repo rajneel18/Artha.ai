@@ -282,7 +282,7 @@ JSON:""".trimIndent()
         }?.let { titleCase(it.trimEnd('.', '-', ' ')) }?.takeIf { it.length >= 2 && (isPlaceholder(it) || !isNotAPayee(it)) } ?: return null
         // Category: what you taught Artha first, then a short AI question (only if the model is ready).
         val cat = known.entries.firstOrNull { it.key.equals(party, true) }?.value
-            ?: if (isPlaceholder(party)) "Other" else (if (model.available()) categoryFor(party, party, categories) else null) ?: "Other"
+            ?: if (isPlaceholder(party)) "Other" else categoryFor(party, party, categories) ?: "Other"
         return Item(type, amount, party, null, cat, confident = !isPlaceholder(party))
     }
 
@@ -333,10 +333,15 @@ JSON:""".trimIndent()
 
     /** "lunch with team" + payee -> one of your categories. */
     fun categoryFor(purpose: String, party: String, categories: List<String>): String? {
+        // Common words first (chai -> Snacks, petrol -> Fuel): instant, and right more often than a tiny model.
+        Categorizer.hint(purpose, categories)?.let { return it }
+        if (party != purpose) Categorizer.hint(party, categories)?.let { return it }
+        if (!model.available()) return null
         val prompt = """
 Pick the spending category for a payment. Reply with only one JSON object: {"category": "..."}
 category must be exactly one of: ${categories.joinToString(", ")}
 Example: paid to Rohan, purpose "dinner" -> {"category": "Food & Dining"}
+Example: paid to Bhqr, purpose "chai" -> {"category": "Snacks"}
 Example: paid to Shell, purpose "petrol" -> {"category": "Fuel"}
 Paid to: $party
 Purpose: $purpose
