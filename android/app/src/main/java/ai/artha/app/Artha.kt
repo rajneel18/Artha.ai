@@ -75,12 +75,16 @@ class Artha : Application() {
         val id = d.l("id") ?: return
         val amount = "₹" + NumberFormat.getNumberInstance(Locale("en", "IN")).format(d.d("amount") ?: 0.0)
         val title = if (d.s("type") == "credit") "$amount received from ${d.s("party")}" else "$amount paid to ${d.s("party")}"
-        val reply = NotificationCompat.Action.Builder(0, "What was it for?", action(ACTION_REPLY, id, true))
-            .addRemoteInput(RemoteInput.Builder(KEY_PURPOSE).setLabel("e.g. lunch, rent share, petrol").build()).setAllowGeneratedReplies(false).build()
+        val party = d.s("party") ?: ""
+        val unnamed = party == "Unknown" || party.startsWith("UPI ") || party.endsWith("QR shop") || party == "GPay merchant"
+        val ask = if (unnamed) "Who is this and what for?" else "What was it for?"
+        val reply = NotificationCompat.Action.Builder(0, ask, action(ACTION_REPLY, id, true))
+            .addRemoteInput(RemoteInput.Builder(KEY_PURPOSE).setLabel(if (unnamed) "e.g. Canteen, food" else "e.g. lunch, rent share, petrol").build())
+            .setAllowGeneratedReplies(false).build()
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(this, CH_ASK).setSmallIcon(R.drawable.ic_stat_rupee).setContentTitle(title)
-            .setContentText("What was it for? Reply and Artha picks the category")
+            .setContentText(if (unnamed) "$ask Name it once and Artha remembers this payee" else "$ask Reply and Artha picks the category")
             .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setContentIntent(open).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(reply)

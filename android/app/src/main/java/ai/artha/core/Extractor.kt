@@ -214,6 +214,47 @@ JSON:""".trimIndent()
         return if (tail.length <= 60 && tail.lowercase().contains("bank")) sms.substring(0, cut).trim() else sms
     }
 
+    // ---------- UPI IDs ----------
+    /** The UPI ID in a message ("bhqr.2933317A@sib"), lower-cased, found by plain text cutting. */
+    fun upiId(sms: String): String? = sms.split(' ', '(', ')', ',', ';', '\n').map { it.trim().trimEnd('.', ':') }
+        .firstOrNull { val at = it.indexOf('@'); at > 1 && at < it.length - 2 && it.count { c -> c == '@' } == 1 }?.lowercase()
+
+    /** A shop QR code or a bare phone number: the SMS can't tell us who it is. */
+    fun isAnonymousUpi(id: String): Boolean {
+        val user = id.substringBefore('@'); val bank = id.substringAfter('@')
+        return user.all { it.isDigit() } || "qr" in user || bank in setOf("ptys", "paytm", "pthdfc", "ptyes", "ptaxis", "ptsbi") ||
+            user.startsWith("q") && user.drop(1).all { it.isDigit() } || user.startsWith("gpay-") || bank.startsWith("okbiz")
+    }
+
+    /** A readable stand-in until you name the payee: "Paytm QR shop", "UPI 83800 81708". */
+    fun labelForUpi(id: String): String {
+        val user = id.substringBefore('@'); val bank = id.substringAfter('@')
+        return when {
+            user.all { it.isDigit() } -> "UPI " + (if (user.length == 10) user.take(5) + " " + user.drop(5) else user)
+            "paytm" in user || bank.startsWith("pt") || bank == "paytm" -> "Paytm QR shop"
+            "bhqr" in user || "bharatpe" in user -> "BharatPe QR shop"
+            user.startsWith("q") && user.drop(1).all { it.isDigit() } -> "PhonePe QR shop"
+            user.startsWith("gpay-") || bank.startsWith("okbiz") -> "GPay merchant"
+            else -> "QR shop"
+        }
+    }
+
+    /** True for the stand-in labels above: the payee still needs a name from you. */
+    fun isPlaceholder(party: String?): Boolean = party == null || party == "Unknown" || party.startsWith("UPI ") ||
+        party.endsWith("QR shop") || party == "GPay merchant"
+
+    /**
+     * Reads type and amount without the model, for payees you've already named. Returns null when unsure,
+     * and the model reads the message instead.
+     */
+    fun quickRead(sms: String, trackReceived: Boolean): Pair<String, Double>? {
+        if (safetyCheck(sms) != null) return null
+        val low = sms.lowercase()
+        val at = listOf("rs.", "rs ", "inr", "₹").map { low.indexOf(it) }.filter { it >= 0 }.minOrNull() ?: return null
+        val amount = numbersIn(sms.substring(at)).firstOrNull()?.takeIf { it > 0 } ?: return null
+        return when { mentionsMoneyOut(sms) -> "debit" to amount; trackReceived && onlyMoneyIn(sms) -> "credit" to amount; else -> null }
+    }
+
     /** "shravani.shinde109-1@okicici" -> "Shravani Shinde": the name part of a UPI ID, by plain text cutting. */
     fun nameFromUpiId(sms: String): String? {
         val token = sms.split(' ', '(', ')', ',', ';').firstOrNull { '@' in it && it.indexOf('@') > 1 } ?: return null
@@ -231,8 +272,11 @@ JSON:""".trimIndent()
         val clean = withoutSignature(sms)
         val (prefix, suffix) = smsPromptParts(clean, categories, known)
         var item = askSplit(prefix, suffix)?.let { toItem(it, clean, categories) } ?: return Verdict(null, "The AI couldn't read this message")
+        // A shop QR or a phone number: the SMS doesn't say who it is, so use a clear label and ask you once.
+        val upi = upiId(clean)
+        if (item.type != "ignore" && upi != null && isAnonymousUpi(upi)) item = item.copy(party = labelForUpi(upi), confident = false)
         // Your account, a bank or card name, a code or a raw UPI ID isn't a payee: use the name inside the UPI ID, else ask.
-        if (item.type != "ignore" && isNotAPayee(item.party)) {
+        else if (item.type != "ignore" && isNotAPayee(item.party)) {
             val fromId = nameFromUpiId(clean)?.takeIf { !isNotAPayee(it) }
             item = if (fromId != null) item.copy(party = fromId) else item.copy(party = "Unknown", confident = false)
         }

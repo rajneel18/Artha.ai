@@ -56,6 +56,9 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         // Our own clean-up version lives in its own table. Never use PRAGMA user_version: Android's database
         // helper owns it, and changing it makes Android refuse to open the database.
         db.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        // Payees you've named, remembered by their UPI ID (shop QRs and phone numbers don't say who they are).
+        db.exec("CREATE TABLE IF NOT EXISTS payees (upi_id TEXT PRIMARY KEY, name TEXT NOT NULL, category TEXT NOT NULL)")
+        for (col in listOf("upi_id TEXT", "gkey TEXT")) try { db.exec("ALTER TABLE detected ADD COLUMN $col") } catch (_: Exception) {}
         val version = (db.scalar("SELECT value FROM meta WHERE key='cleanup_version'") as? String)?.toIntOrNull() ?: 0
         if (version < 3) {
             // Earlier versions sometimes named the bank, the account or a code as the payee: re-read those (not yet logged).
@@ -589,7 +592,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     }
 
     // ---------------- deletion ----------------
-    val ALL_TABLES = listOf("splits", "transactions", "subscriptions", "rules", "merchant_rules", "settings", "allowance_history", "detected")
+    val ALL_TABLES = listOf("splits", "transactions", "subscriptions", "rules", "merchant_rules", "settings", "allowance_history", "detected", "payees")
 
     fun deleteData(scope: String, from: String?, to: String?): Long {
         db.transaction {
@@ -600,7 +603,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
                     if (from == null || to == null) throw ApiError(400, "Pick a start and end date")
                     db.exec("DELETE FROM transactions WHERE date BETWEEN ? AND ?", from, to)
                 }
-                "learned" -> { db.exec("DELETE FROM merchant_rules"); db.exec("DELETE FROM rules") }
+                "learned" -> { db.exec("DELETE FROM merchant_rules"); db.exec("DELETE FROM rules"); db.exec("DELETE FROM payees") }
                 else -> throw ApiError(400, "Unknown scope")
             }
         }
@@ -627,9 +630,20 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         val r = db.one("SELECT * FROM detected WHERE status='pending' ORDER BY (source='sms') DESC, received_at DESC, id DESC LIMIT 1") ?: return false
         val id = r.l("id")!!
         val cats = allCategories(); val known = learnedMap()
-        val v = try {
-            if (r.s("source") == "import" && !r.s("header").isNullOrBlank()) ex.fromRow(r.s("header")!!, r.s("body")!!, cats, known)
-            else ex.fromSms(r.s("body")!!, cats, known, settings()["track_received"] == true)
+        val body = r.s("body")!!
+        val isRow = r.s("source") == "import" && !r.s("header").isNullOrBlank()
+        val upi = if (isRow) null else ex.upiId(body)
+        val payee = upi?.let { db.one("SELECT * FROM payees WHERE upi_id=?", it) }
+        val trackReceived = settings()["track_received"] == true
+        // A payee you've already named: read the amount directly and skip the AI entirely (instant, no load).
+        val quick = if (payee != null) ex.quickRead(body, trackReceived) else null
+        val v = if (quick != null) Extractor.Verdict(Extractor.Item(quick.first, quick.second, payee!!.s("name")!!, null, payee.s("category")!!, true), null)
+        else try {
+            if (isRow) ex.fromRow(r.s("header")!!, body, cats, known)
+            else ex.fromSms(body, cats, known, trackReceived).let { vv ->
+                // Known UPI ID but the quick read wasn't sure: still use the name and category you gave.
+                if (payee != null && vv.item != null && vv.item.type != "ignore") vv.copy(item = vv.item.copy(party = payee.s("name")!!, category = payee.s("category")!!, confident = true)) else vv
+            }
         } catch (e: ModelMissing) { throw e } catch (e: Exception) { Extractor.Verdict(null, "The AI couldn't read this message") }
         val it = v.item
         // Your rules and corrections take priority over the AI's category guess.
@@ -638,6 +652,9 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         db.exec("UPDATE detected SET status=?, type=?, amount=?, party=?, category=?, date=?, confident=?, reason=?, split_with=?, split_ways=? WHERE id=?",
             status, it?.type, it?.amount, it?.party, cat, it?.date?.toString(), if (it?.confident == true) 1L else 0L, v.reason,
             it?.splitWith?.joinToString(","), it?.splitWays?.toLong(), id)
+        // Unnamed QR / phone payments are grouped by their UPI ID (different shops share the same label).
+        db.exec("UPDATE detected SET upi_id=?, gkey=? WHERE id=?", upi,
+            if (upi != null && ex.isPlaceholder(it?.party)) upi else (it?.party ?: "").lowercase(), id)
         val history = r.s("source") in setOf("history", "import")
         if (status == "analyzed" && history && it!!.type == "upcoming") {
             // An old "scheduled" message is in the past; the real debit SMS (if any) is imported separately.
@@ -656,15 +673,15 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
      */
     fun detected(): Map<String, Any?> {
         val groups = db.query(
-            "SELECT party, type, COUNT(*) AS count, ROUND(SUM(amount),2) AS total, MIN(received_at) AS first, MAX(received_at) AS last, " +
+            "SELECT COALESCE(gkey, lower(party)) AS gkey, upi_id, party, type, COUNT(*) AS count, ROUND(SUM(amount),2) AS total, MIN(received_at) AS first, MAX(received_at) AS last, " +
                 "SUM(CASE WHEN confident=1 THEN 0 ELSE 1 END) AS unsure, " +
-                "(SELECT d2.category FROM detected d2 WHERE d2.status='analyzed' AND d2.source IN ('history','import') AND lower(d2.party)=lower(d.party) " +
+                "(SELECT d2.category FROM detected d2 WHERE d2.status='analyzed' AND d2.source IN ('history','import') AND COALESCE(d2.gkey, lower(d2.party))=COALESCE(d.gkey, lower(d.party)) " +
                 " AND d2.type=d.type GROUP BY d2.category ORDER BY COUNT(*) DESC LIMIT 1) AS category " +
-                "FROM detected d WHERE status='analyzed' AND source IN ('history','import') GROUP BY lower(party), type ORDER BY total DESC")
+                "FROM detected d WHERE status='analyzed' AND source IN ('history','import') GROUP BY COALESCE(gkey, lower(party)), type ORDER BY total DESC")
         val withSamples = groups.map { g ->
             g.toMutableMap().apply {
                 this["samples"] = db.query("SELECT body, amount, received_at FROM detected WHERE status='analyzed' AND source IN ('history','import') " +
-                    "AND lower(party)=lower(?) AND type=? ORDER BY received_at DESC LIMIT 3", g.s("party"), g.s("type"))
+                    "AND COALESCE(gkey, lower(party))=? AND type=? ORDER BY received_at DESC LIMIT 3", g.s("gkey"), g.s("type"))
             }
         }
         return mapOf(
@@ -687,13 +704,15 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     }
 
     /** Log or skip every imported item for one payee, optionally setting the category for all of them. */
-    fun actOnGroup(party: String, type: String, action: String, category: String?): Int {
-        val ids = db.query("SELECT id FROM detected WHERE status='analyzed' AND source IN ('history','import') AND lower(party)=lower(?) AND type=?", party, type)
+    fun actOnGroup(key: String, type: String, action: String, category: String?, name: String? = null): Int {
+        val party = name?.trim()?.takeIf { it.isNotEmpty() } ?: key
+        val ids = db.query("SELECT id FROM detected WHERE status='analyzed' AND source IN ('history','import') AND COALESCE(gkey, lower(party))=lower(?) AND type=?", key, type)
             .mapNotNull { it.l("id") }
         return db.transaction {
             var n = 0
             for (id in ids) {
-                if (action == "skip") skipDetected(id) else try { logDetected(id, if (category != null) mapOf("category" to category) else emptyMap()); n++ } catch (_: ApiError) {}
+                val edits = buildMap { if (category != null) put("category", category); if (!name.isNullOrBlank()) put("party", name.trim()) }
+                if (action == "skip") skipDetected(id) else try { logDetected(id, edits); n++ } catch (_: ApiError) {}
             }
             // Teach the AI: future SMS to this payee get this category.
             if (category != null && action != "skip") Categorizer.merchantKey(party).takeIf { it.isNotEmpty() && it != "unknown" }?.let {
@@ -723,6 +742,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             db.exec("UPDATE detected SET status='logged' WHERE id=?", id)
             return mapOf("subscription" to party)
         }
+        rememberPayee(r.s("upi_id"), party, cat)
         val split = r.s("split_with")?.split(",")?.filter { it.isNotBlank() } ?: emptyList()
         val tx = record(d, amount, if (type == "credit") "credit" else "debit", party, r.s("body") ?: party,
             r.s("source") ?: "sms", cat.takeIf { it in allCategories() }, raw = null,
@@ -731,6 +751,19 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         db.exec("UPDATE detected SET status='logged', tx_id=? WHERE id=?", tx?.get("id"), id)
         return tx
     }
+
+    private fun isPlaceholder(p: String?) = p == null || p == "Unknown" || p.startsWith("UPI ") || p.endsWith("QR shop") || p == "GPay merchant"
+
+    /** Remembers who a UPI ID is, so the next payment to it is named and categorized without the AI. */
+    fun rememberPayee(upi: String?, name: String, category: String) {
+        if (upi.isNullOrBlank() || isPlaceholder(name)) return
+        db.exec("INSERT INTO payees(upi_id, name, category) VALUES(?,?,?) ON CONFLICT(upi_id) DO UPDATE SET name=excluded.name, category=excluded.category",
+            upi, name.trim().take(60), category)
+        // Anything else still waiting from the same UPI ID gets the name too.
+        db.exec("UPDATE detected SET party=?, category=?, gkey=lower(?), confident=1 WHERE upi_id=? AND status='analyzed'", name.trim().take(60), category, name.trim(), upi)
+    }
+
+    fun payees(): List<Row> = db.query("SELECT * FROM payees ORDER BY name")
 
     fun skipDetected(id: Long) = db.exec("UPDATE detected SET status='skipped', reason=COALESCE(reason, 'Skipped by you') WHERE id=?", id)
 
@@ -746,13 +779,19 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     /** Answer to "What was it for?": the AI turns your words into a category; the payment is logged (or re-categorized). */
     fun logWithPurpose(id: Long, purpose: String, ex: Extractor): Map<String, Any?>? {
         val r = db.one("SELECT * FROM detected WHERE id=?", id) ?: throw ApiError(404, "Not found")
-        val cat = ex.categoryFor(purpose, r.s("party") ?: "", allCategories()) ?: r.s("category") ?: "Other"
-        val note = "${purpose.trim().take(120)} (${r.s("party")})"
+        // For an unnamed QR or number, the answer is "who, what for" (e.g. "Canteen, food"); just "Mom" works too.
+        val unnamed = isPlaceholder(r.s("party"))
+        val who = if (unnamed) purpose.substringBefore(',').trim().take(60).ifEmpty { null } else null
+        val why = if (unnamed && ',' in purpose) purpose.substringAfter(',').trim() else purpose.trim()
+        val party = who ?: r.s("party") ?: "Unknown"
+        val cat = ex.categoryFor(why.ifEmpty { party }, party, allCategories()) ?: r.s("category") ?: "Other"
+        val note = "${why.take(120)} ($party)"
         return if (r.s("status") == "logged" && r.l("tx_id") != null) {
             val txId = r.l("tx_id")!!
-            setCategory(txId, cat); db.exec("UPDATE transactions SET note=? WHERE id=?", note, txId); row(txId)
+            setCategory(txId, cat); db.exec("UPDATE transactions SET note=?, merchant=? WHERE id=?", note, party, txId)
+            rememberPayee(r.s("upi_id"), party, cat); row(txId)
         } else {
-            val tx = logDetected(id, mapOf("category" to cat))
+            val tx = logDetected(id, buildMap { put("category", cat); if (who != null) put("party", who) })
             (tx?.get("id") as? Long)?.let { db.exec("UPDATE transactions SET note=? WHERE id=?", note, it) }
             tx?.let { row(it["id"] as Long) }
         }

@@ -106,6 +106,49 @@ class EngineTest {
         assertEquals("Meera Kulkarni", items().first { it["amount"] == 75.0 }["party"])
     }
 
+    private val QR_115 = "Your a/c no. XX6196 is debited for Rs.115.00 on 12-11-2026 17:13:52 and credited to vpa bhqr.2933317A@sib (UPI Ref no 631644270678) Your Current Balance is INR 85570.27. If this not done by you, kindly contact on  022-41572070 - Saraswat Co-op Bank Ltd."
+    private val PHONE_1 = "Your a/c no. XX6196 is debited for Rs.1.00 on 16-11-2026 13:59:38 and credited to vpa 8380081708@upi (UPI Ref no 632017674849) Your Current Balance is INR 84574.27. If this not done by you, kindly contact on  022-41572070 - Saraswat Co-op Bank Ltd."
+    private val PAYTM_95 = "Your a/c no. XX6196 is debited for Rs.95.00 on 13-11-2026 13:45:35 and credited to vpa paytmqr6vyrxd@ptys (UPI Ref no 631756578767) Your Current Balance is INR 84729.27. If this not done by you, kindly contact on  022-41572070 - Saraswat Co-op Bank Ltd."
+
+    @Test fun unnamedQrAndNumbersAreLabelledThenRemembered() {
+        model.answers["bhqr"] = """{"type": "debit", "amount": 115, "party": "Bhqr", "category": "Shopping"}"""
+        model.answers["8380081708"] = """{"type": "debit", "amount": 1, "party": "UPI", "category": "Transfers"}"""
+        model.answers["paytmqr"] = """{"type": "debit", "amount": 95, "party": "Paytm", "category": "Shopping"}"""
+        receive(QR_115); receive(PHONE_1); receive(PAYTM_95)
+        val byAmount = items().associateBy { it["amount"] }
+        assertEquals("BharatPe QR shop", byAmount[115.0]!!["party"]); assertEquals(0L, byAmount[115.0]!!["confident"])
+        assertEquals("UPI 83800 81708", byAmount[1.0]!!["party"])
+        assertEquals("Paytm QR shop", byAmount[95.0]!!["party"])
+        // name the canteen QR once
+        call("POST", "/api/detected/${byAmount[115.0]!!["id"]}", mapOf("action" to "log", "party" to "College Canteen", "category" to "Food & Dining"))
+        // next payment to the same QR: named and categorized without the AI
+        val before = model.calls
+        receive(QR_115.replace("115.00", "60.00").replace("631644270678", "631644270999"))
+        assertEquals("the AI isn't used for a known payee", before, model.calls)
+        val next = items().first { it["amount"] == 60.0 }
+        assertEquals("College Canteen", next["party"]); assertEquals("Food & Dining", next["category"]); assertEquals(1L, next["confident"])
+        // "Mom, gift" in the notification reply names the number and logs it
+        model.answers["Purpose: gift"] = """{"category": "Shopping"}"""
+        val tx = call("POST", "/api/detected/${byAmount[1.0]!!["id"]}", mapOf("action" to "purpose", "purpose" to "Mom, gift")) as Map<String, Any?>
+        assertEquals("Mom", tx["merchant"]); assertEquals("Shopping", tx["category"])
+        assertEquals(setOf("bhqr.2933317a@sib", "8380081708@upi"), engine.payees().map { it["upi_id"] }.toSet())
+    }
+
+    @Test fun historyGroupsUnnamedQrsSeparately() {
+        model.answers["bhqr"] = """{"type": "debit", "amount": 115, "party": "Bhqr", "category": "Food & Dining"}"""
+        model.answers["paytmqr"] = """{"type": "debit", "amount": 95, "party": "Shop", "category": "Food & Dining"}"""
+        model.answers["paytmqrzz"] = """{"type": "debit", "amount": 95, "party": "Shop", "category": "Food & Dining"}"""
+        api.captureSms(QR_115, "AX-SARBNK", now.minusDays(3), history = true)
+        api.captureSms(PAYTM_95, "AX-SARBNK", now.minusDays(2), history = true)
+        api.captureSms(PAYTM_95.replace("paytmqr6vyrxd", "paytmqrzz1abc").replace("631756578767", "1"), "AX-SARBNK", now.minusDays(1), history = true)
+        while (engine.analyzeNext(api.extractor)) {}
+        val groups = detected()["groups"] as List<Map<String, Any?>>
+        assertEquals("two different Paytm QRs aren't lumped together", 3, groups.size)
+        val g = groups.first { it["upi_id"] == "paytmqr6vyrxd@ptys" }
+        call("POST", "/api/detected/group", mapOf("key" to g["gkey"], "type" to "debit", "action" to "log", "name" to "Chai Point", "category" to "Food & Dining"))
+        assertEquals(listOf("Chai Point"), txs().map { it["merchant"] })
+    }
+
     @Test fun safetyCheckOverridesTheModel() {
         receive(OTP)
         receive(NETFLIX_MANDATE)

@@ -600,6 +600,7 @@ function renderHistory(det) {
   $("histList").innerHTML = groups.slice(0, histShown).map((g, i) => `<div class="grp" data-g="${i}">
       <div class="top"><span>${esc(g.party || "Unknown")}</span><span class="${g.type === "credit" ? "credit" : ""}">${g.type === "credit" ? "+" : ""}${inr(g.total)}</span></div>
       <div class="meta">${g.count} ${g.type === "upcoming" ? "scheduled" : g.type === "credit" ? "received" : "payment"}${g.count > 1 && g.type !== "upcoming" ? "s" : ""} · ${dayLabel(String(g.first).slice(0, 10))} to ${dayLabel(String(g.last).slice(0, 10))}${g.unsure ? ` · ${g.unsure} to check` : ""}</div>
+      ${unnamed(g.party) ? `<input type="text" data-gname placeholder="Who is this? (Artha remembers it)" style="margin-top:8px;padding:10px">` : ""}
       <details><summary>See message${g.count > 1 ? "s" : ""}</summary>${(g.samples || []).map(m => `<p>${esc(dayLabel(String(m.received_at).slice(0, 10)))}: ${esc(m.body)}</p>`).join("")}</details>
       <div class="acts"><select aria-label="Category for ${esc(g.party)}" data-gcat="${i}">${cats(g.category)}</select>
         <button class="btn small" data-gact="skip">Skip</button><button class="btn small primary" data-gact="log">Log ${g.count}</button></div>
@@ -611,7 +612,8 @@ $("histList").addEventListener("click", async (e) => {
   const b = e.target.closest("[data-gact]"); if (!b) return;
   const row = b.closest("[data-g]"), g = window.__groups[+row.dataset.g], cat = row.querySelector("select").value;
   try {
-    const r = await api("/api/detected/group", { json: { party: g.party, type: g.type, action: b.dataset.gact, category: cat } });
+    const nm = row.querySelector("[data-gname]");
+    const r = await api("/api/detected/group", { json: { key: g.gkey || g.party, type: g.type, action: b.dataset.gact, category: cat, name: nm && nm.value.trim() ? nm.value.trim() : undefined } });
     toast(b.dataset.gact === "skip" ? `Skipped ${r.count}` : `Logged ${r.count} as ${cat}`); refresh();
   } catch (err) { fail(err); }
 });
@@ -643,6 +645,7 @@ window.__arthaPermBlocked = () => {
 };
 
 // ---------- detected payments (AI findings waiting for your OK) ----------
+const unnamed = (p) => !p || p === "Unknown" || p.startsWith("UPI ") || p.endsWith("QR shop") || p === "GPay merchant";
 function detItem(d, skipped) {
   const upcoming = d.type === "upcoming", credit = d.type === "credit";
   const label = upcoming ? "Upcoming" : credit ? "Received" : "Paid";
@@ -654,6 +657,7 @@ function detItem(d, skipped) {
       ${skipped ? "" : `<select data-detcat="${d.id}" aria-label="Category">${cats}</select>`}
       ${!skipped && !d.confident ? '<span class="chip warn">please check</span>' : ""}</div>
     ${d.reason ? `<div class="hint" style="font-size:13px">${esc(d.reason)}</div>` : ""}
+    ${!skipped && unnamed(d.party) ? `<input type="text" data-detname placeholder="Who is this? (Artha remembers it)" style="margin-top:8px;padding:10px">` : ""}
     <details><summary>Original message</summary><p>${esc(d.body)}</p></details>
     <div class="acts">${skipped ? `<button class="btn" data-detact="log">Log anyway</button>`
       : `<button class="btn" data-detact="skip">Skip</button><button class="btn primary" data-detact="log">${upcoming ? "Track" : "Log"}</button>`}</div>
@@ -675,7 +679,7 @@ $("detCard").addEventListener("click", async (e) => {
   const row = b.closest("[data-det]"), id = row.dataset.det, sel = row.querySelector("[data-detcat]");
   try {
     if (b.dataset.detact === "skip") await api(`/api/detected/${id}`, { json: { action: "skip" } });
-    else { const r = await api(`/api/detected/${id}`, { json: { action: "log", category: sel ? sel.value : undefined } }); toast(r && r.subscription ? `${r.subscription} added to subscriptions` : "Logged"); }
+    else { const nm = row.querySelector("[data-detname]"); const r = await api(`/api/detected/${id}`, { json: { action: "log", category: sel ? sel.value : undefined, party: nm && nm.value.trim() ? nm.value.trim() : undefined } }); toast(r && r.subscription ? `${r.subscription} added to subscriptions` : "Logged"); }
     refresh();
   } catch (err) { fail(err); }
 });

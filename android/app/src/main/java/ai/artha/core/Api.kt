@@ -49,12 +49,15 @@ class Api(val engine: Engine, val model: LocalModel) {
                 val action = b.str("action") ?: "log"
                 if (action !in setOf("log", "skip")) throw ApiError(400, "Unknown action")
                 checkCategory(b.str("category"))
-                mapOf("count" to engine.actOnGroup(b.str("party") ?: throw ApiError(400, "Which payee?"), b.str("type") ?: "debit", action, b.str("category")))
+                mapOf("count" to engine.actOnGroup(b.str("key") ?: b.str("party") ?: throw ApiError(400, "Which payee?"), b.str("type") ?: "debit", action,
+                    b.str("category"), b.str("name")))
             }
             m == "POST" && p.size == 2 && p[0] == "detected" -> {
                 val id = id(p[1])
                 when (b.str("action")) {
                     "log" -> { checkCategory(b.str("category")); engine.logDetected(id, b) }
+                    "rename" -> { val d = engine.db.one("SELECT upi_id, category FROM detected WHERE id=?", id) ?: throw ApiError(404, "Not found")
+                        engine.rememberPayee(d.s("upi_id"), b.str("party") ?: throw ApiError(400, "Name?"), b.str("category") ?: d.s("category") ?: "Other"); mapOf("ok" to true) }
                     "skip" -> { engine.skipDetected(id); mapOf("ok" to true) }
                     "purpose" -> engine.logWithPurpose(id, b.str("purpose") ?: throw ApiError(400, "What was it for?"), extractor)
                     else -> throw ApiError(400, "Unknown action")
