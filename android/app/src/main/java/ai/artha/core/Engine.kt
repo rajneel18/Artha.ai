@@ -84,6 +84,12 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             "hide_in_recents" to true,
             "auto_log_confident" to false,
             "auto_log_history" to true,
+            "monthly_budget" to 15000.0,
+            "theme" to "system",
+            "category_limits" to emptyMap<String, Double>(),
+            "user_name" to "",
+            "reminder_on" to true,
+            "reminder_hour" to 21L,
             "track_received" to false,
         )
         val FIXED = setOf("Rent", "Bills & Utilities", "Investments", "Transfers", "Education")
@@ -592,7 +598,8 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     }
 
     // ---------------- deletion ----------------
-    val ALL_TABLES = listOf("splits", "transactions", "subscriptions", "rules", "merchant_rules", "settings", "allowance_history", "detected", "payees")
+    val ALL_TABLES = listOf("splits", "transactions", "subscriptions", "rules", "merchant_rules", "settings", "allowance_history", "detected", "payees",
+        "zero_days", "freezes", "envelopes", "split_groups")
 
     fun deleteData(scope: String, from: String?, to: String?): Long {
         db.transaction {

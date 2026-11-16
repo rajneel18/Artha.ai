@@ -330,3 +330,57 @@ class BackupTest {
         assertEquals(777.0, (b.handle("GET", "/api/settings", null).body as Map<String, Any?>)["daily_allowance"] as Double, 0.0)
     }
 }
+
+@Suppress("UNCHECKED_CAST")
+class ExtrasTest {
+    private val today = LocalDate.of(2026, 11, 16)
+    private val engine = Engine(JdbcDb()) { today }
+    private val model = FakeModel()
+    private val api = Api(engine, model)
+    private fun call(m: String, p: String, b: Any? = null): Any? { val r = api.handle(m, p, b?.let { toJson(it).toString() }); assertEquals("$p ${r.body}", 200, r.status); return r.body }
+    private fun tx(amount: Double, date: String, cat: String = "Food & Dining", merchant: String = "Cafe") =
+        call("POST", "/api/transactions", mapOf("amount" to amount, "merchant" to merchant, "category" to cat, "date" to date)) as Map<String, Any?>
+
+    @Test fun streakCountsZeroDaysAndUsesOneFreezeAMonth() {
+        tx(100.0, "2026-11-12"); tx(80.0, "2026-11-13"); /* 14th missed */ tx(60.0, "2026-11-15")
+        val s = call("GET", "/api/streak") as Map<String, Any?>
+        assertEquals("freeze covers the 14th", 3, s["current"]); assertEquals(true, s["at_risk"]); assertEquals(false, s["freeze_available"])
+        call("POST", "/api/streak/zero")
+        val s2 = call("GET", "/api/streak") as Map<String, Any?>
+        assertEquals(4, s2["current"]); assertEquals(true, s2["today_done"]); assertEquals(35, (s2["days"] as List<*>).size)
+    }
+
+    @Test fun envelopesTrackTheirOwnSpending() {
+        call("POST", "/api/envelopes", mapOf("name" to "Goa trip", "budget" to 15000, "end_date" to "2026-12-31"))
+        val env = (call("GET", "/api/envelopes") as List<Map<String, Any?>>).single()
+        val t = tx(4000.0, "2026-11-16", "Travel", "Indigo")
+        call("POST", "/api/transactions/${t["id"]}/envelope", mapOf("envelope_id" to env["id"]))
+        val e2 = (call("GET", "/api/envelopes") as List<Map<String, Any?>>).single()
+        assertEquals(4000.0, e2["spent"] as Double, 0.0); assertEquals(11000.0, e2["left"] as Double, 0.0)
+        assertEquals("envelope spending stays out of the monthly pace", 0.0, (call("GET", "/api/pace") as Map<String, Any?>)["spent"] as Double, 0.0)
+    }
+
+    @Test fun paceLeavesOneOffCostsOutOfTheProjection() {
+        call("PUT", "/api/settings", mapOf("monthly_budget" to 20000))
+        tx(15000.0, "2026-11-01", "Rent", "Landlord")
+        for (d in 1..16) tx(200.0, "2026-11-%02d".format(d))
+        val p = call("GET", "/api/pace") as Map<String, Any?>
+        // flexible 3200 over 16 days -> 6000 for 30 days, plus rent once = 21000
+        assertEquals(21000L, p["projected"]); assertTrue((p["headline"] as String).contains("overshoot") || (p["headline"] as String).contains("runs out"))
+    }
+
+    @Test fun groupsAndNewSplit() {
+        call("POST", "/api/groups", mapOf("name" to "Flat", "members" to listOf("rahul", "priya")))
+        call("POST", "/api/splits/new", mapOf("amount" to 900, "what" to "Groceries", "people" to listOf("Rahul", "Priya")))
+        val f = call("GET", "/api/friends") as Map<String, Any?>
+        assertEquals(600.0, f["net"] as Double, 0.0)
+        assertEquals(listOf("Rahul", "Priya"), (call("GET", "/api/groups") as List<Map<String, Any?>>).single()["members"])
+    }
+
+    @Test fun parseReviewsWithoutSaving() {
+        model.answers["chai"] = """{"items": [{"type": "debit", "amount": 40, "party": "Chai", "date": "2026-11-16", "category": "Food & Dining"}, {"type": "debit", "amount": 120, "party": "Auto", "date": "2026-11-16", "category": "Transport"}]}"""
+        val r = call("POST", "/api/parse", mapOf("text" to "chai 40 aur auto 120")) as List<Map<String, Any?>>
+        assertEquals(listOf("Chai", "Auto"), r.map { it["party"] })
+        assertTrue((call("GET", "/api/transactions") as List<*>).isEmpty())
+    }
+}

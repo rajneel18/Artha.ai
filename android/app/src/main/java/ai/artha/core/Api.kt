@@ -9,6 +9,7 @@ import java.util.Base64
  */
 class Api(val engine: Engine, val model: LocalModel) {
     val extractor = Extractor(model)
+    val extras = Extras(engine)
     private val db get() = engine.db
     private fun today() = engine.today()
 
@@ -137,6 +138,22 @@ class Api(val engine: Engine, val model: LocalModel) {
                 val backup = try { parseBody(b.str("content")) } catch (e: Exception) { throw ApiError(400, "That isn't an Artha backup file") }
                 mapOf("ok" to true, "transactions" to engine.restore(backup))
             }
+            // Quick Add: read several payments from a note without saving, so you can review them first.
+            m == "POST" && p == listOf("parse") -> extractor.fromNote(b.str("text") ?: throw ApiError(400, "Type something first"), engine.allCategories(), engine.learnedMap(), today())
+                .filter { it.type in setOf("debit", "credit") }.map { mapOf("amount" to it.amount, "party" to it.party, "category" to it.category, "date" to (it.date ?: today()).toString(), "type" to it.type) }
+            // ---- streaks, envelopes, pace, groups ----
+            m == "GET" && p == listOf("streak") -> extras.streak()
+            m == "POST" && p == listOf("streak", "zero") -> extras.markZeroDay()
+            m == "GET" && p == listOf("pace") -> extras.pace()
+            m == "GET" && p == listOf("envelopes") -> extras.envelopes(q["archived"] == "1")
+            m == "POST" && p == listOf("envelopes") -> extras.createEnvelope(b.str("name") ?: "", b.dbl("budget") ?: 0.0, b.str("end_date"))
+            m == "DELETE" && p.size == 2 && p[0] == "envelopes" -> { extras.deleteEnvelope(id(p[1])); mapOf("ok" to true) }
+            m == "POST" && p.size == 3 && p[0] == "transactions" && p[2] == "envelope" -> { extras.linkEnvelope(id(p[1]), b.dbl("envelope_id")?.toLong()); engine.row(id(p[1])) }
+            m == "GET" && p == listOf("friends") -> extras.friends()
+            m == "GET" && p == listOf("groups") -> extras.groups()
+            m == "POST" && p == listOf("groups") -> extras.createGroup(b.str("name") ?: "", b.strList("members") ?: emptyList())
+            m == "DELETE" && p.size == 2 && p[0] == "groups" -> { extras.deleteGroup(id(p[1])); mapOf("ok" to true) }
+            m == "POST" && p == listOf("splits", "new") -> extras.newSplit(b.dbl("amount") ?: 0.0, b.str("what") ?: "", b.strList("people") ?: emptyList(), b.str("category"))
             else -> throw ApiError(404, "Not found")
         }
     }
@@ -212,9 +229,15 @@ class Api(val engine: Engine, val model: LocalModel) {
         b.dbl("daily_allowance")?.let { if (it !in 0.0..1_000_000.0) throw ApiError(400, "Daily allowance must be between 0 and 10,00,000"); clean["daily_allowance"] = round2(it) }
         b.strList("excluded_categories")?.let { clean["excluded_categories"] = it.take(50) }
         b.strList("custom_categories")?.let { l -> clean["custom_categories"] = l.map { it.trim().take(30) }.filter { it.isNotEmpty() }.toSortedSet().take(30) }
+        b.dbl("monthly_budget")?.let { if (it !in 0.0..10_000_000.0) throw ApiError(400, "Budget looks wrong"); clean["monthly_budget"] = round2(it) }
+        b.str("user_name")?.let { clean["user_name"] = it.trim().take(30) }
+        b.str("theme")?.takeIf { it in setOf("system", "light", "dark") }?.let { clean["theme"] = it }
+        @Suppress("UNCHECKED_CAST") (b["category_limits"] as? Map<String, Any?>)?.let { m ->
+            clean["category_limits"] = m.mapValues { (it.value as? Number)?.toDouble() ?: 0.0 }.filter { it.value > 0 } }
+        b.dbl("reminder_hour")?.let { clean["reminder_hour"] = it.toLong().coerceIn(0, 23) }
         b.dbl("savings_goal_pct")?.let { clean["savings_goal_pct"] = it.toLong().coerceIn(0, 90) }
         b.str("budget_start")?.let { clean["budget_start"] = LocalDate.parse(it).toString() }
-        for (k in listOf("auto_capture_sms", "auto_log_confident", "auto_log_history", "track_received", "notify_logged", "app_lock", "hide_in_recents"))
+        for (k in listOf("reminder_on", "auto_capture_sms", "auto_log_confident", "auto_log_history", "track_received", "notify_logged", "app_lock", "hide_in_recents"))
             b.bool(k)?.let { clean[k] = it }
         engine.ensureStarted()
         return engine.setSettings(clean).apply { this["model_ready"] = model.available() }
