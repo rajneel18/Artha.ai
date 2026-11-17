@@ -138,9 +138,10 @@ fun DailyPage() {
                 Text("Last 7 days: ${rupees0(ws)} of ${rupees0(wa)}" + if (ws <= wa) ", ${rupees0(wa - ws)} saved" else ", ${rupees0(ws - wa)} over",
                     style = T.small, color = P.muted)
                 val out = (d["counted_categories_excluded"] as? List<*>).orEmpty().map { it.toString() }
-                Text(if (out.isEmpty()) "Every category counts toward your daily allowance. Change" else "Not counted: ${out.joinToString(", ")}. Change",
-                    style = T.small, color = P.gold, modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).tap { counts = true }.padding(vertical = 6.dp))
                 Spacer(Modifier.height(12.dp))
+                GhostButton("What counts in daily allowance", Modifier.fillMaxWidth(), P.gold) { counts = true }
+                Text(if (out.isEmpty()) "Every category counts." else "Not counted: ${out.joinToString(", ")}",
+                    style = T.small, color = P.muted, modifier = Modifier.padding(top = 6.dp, bottom = 12.dp))
                 GoldButton("Add to ${shortDay(day).let { if (it == "Today" || it == "Yesterday") it.lowercase() else it }}", icon = { GlyphIcon("plus", P.onGold, 20.dp) }) { adding = true }
                 SectionTitle("Payments")
             }
