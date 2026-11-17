@@ -139,9 +139,12 @@ private fun ToastHost(modifier: Modifier) {
 }
 
 /** Runs an engine call, refreshes everything after, and shows errors as toasts. */
+/** Lives as long as the app, so a save started from a sheet still finishes after the sheet closes. */
+val AppScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Main.immediate)
+
 @Composable
 fun rememberAct(): (suspend Repo.() -> Unit) -> Unit {
-    val repo = LocalRepo.current; val refresh = LocalRefresh.current; val toast = LocalToast.current; val scope = rememberCoroutineScope()
+    val repo = LocalRepo.current; val refresh = LocalRefresh.current; val toast = LocalToast.current; val scope = AppScope
     return { block -> scope.launch { try { repo.block(); refresh.bump() } catch (e: Exception) { toast.show(e.message ?: "Something went wrong") } } }
 }
 

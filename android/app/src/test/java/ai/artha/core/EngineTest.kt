@@ -219,7 +219,8 @@ class EngineTest {
         model.ready = false
         api.captureSms(SARASWAT_DEBIT, "AX-SARBNK", now)
         assertEquals(1L, engine.pendingCount())
-        assertEquals(409, status("POST", "/api/ingest", mapOf("text" to "250 swiggy")))
+        assertEquals(200, status("POST", "/api/ingest", mapOf("text" to "250 swiggy")))             // simple notes don't need the AI
+        assertEquals(409, status("POST", "/api/ingest", mapOf("text" to "dinner 900 split with Asha and Ravi")))
         model.ready = true
         while (engine.analyzeNext(api.extractor)) {}
         assertEquals(0L, engine.pendingCount()); assertEquals(1, items().size)
@@ -300,6 +301,19 @@ class EngineTest {
         val strip = (d["days"] as List<Map<String, Any?>>).associateBy { it["date"] }
         assertEquals("over", strip[today.minusDays(3).toString()]!!["state"]); assertEquals("under", strip[today.toString()]!!["state"])
         assertEquals(50.0, (call("GET", "/api/daily") as Map<String, Any?>)["spent"] as Double, 0.0)
+    }
+
+    @Test fun simpleNotesAreReadWithoutTheAi() {
+        fun parse(t: String) = call("POST", "/api/parse", mapOf("text" to t)) as List<Map<String, Any?>>
+        val a = parse("70 lunch").single()
+        assertEquals(70.0, a["amount"]); assertEquals("Lunch", a["party"]); assertEquals("Food & Dining", a["category"]); assertEquals(true, a["confident"])
+        assertEquals(listOf(200.0 to "Snacks", 50.0 to "Transport"), parse("200 chai aur 50 auto").map { it["amount"] to it["category"] })
+        assertEquals(listOf(1200.0, 40.0), parse("groceries ₹1,200, tea 40").map { it["amount"] })
+        assertEquals(today.minusDays(1).toString(), parse("lunch 120 yesterday").single()["date"])
+        assertEquals(0, model.calls)
+        // typed without a category: the word decides
+        val tx = call("POST", "/api/transactions", mapOf("amount" to 70, "merchant" to "lunch")) as Map<String, Any?>
+        assertEquals("Food & Dining", tx["category"])
     }
 
     @Test fun answerWhatWasItFor() {

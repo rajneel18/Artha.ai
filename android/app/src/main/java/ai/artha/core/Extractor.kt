@@ -321,7 +321,37 @@ JSON:""".trimIndent()
     }
 
     @Suppress("UNCHECKED_CAST")
+    /**
+     * Reads simple notes without the AI: "70 lunch", "lunch 70", "chai 40, auto 120", "200 chai aur 50 auto", "₹1,200 groceries yesterday".
+     * Returns null when any part is unclear, and the AI reads the whole note instead.
+     */
+    fun quickNote(text: String, categories: List<String>, known: Map<String, String>, today: LocalDate): List<Item>? {
+        var t = " " + text.lowercase().replace('\n', ',') + " "
+        var date = today
+        Regex("\\b(yesterday|yday)\\b").find(t)?.let { date = today.minusDays(1); t = t.replace(it.value, " ") }
+        Regex("\\btoday\\b").find(t)?.let { t = t.replace(it.value, " ") }
+        if (Regex("\\b(split|share|shared|owe|owes|received|got|refund|salary)\\b").containsMatchIn(t)) return null // the AI handles these
+        val parts = t.split(Regex("(?<!\\d),|,(?!\\d)|;|\\+|&|\\band\\b|\\baur\\b|\\bthen\\b")).map { it.trim() }.filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        val filler = setOf("rs", "rs.", "inr", "rupees", "rupee", "for", "on", "paid", "spent", "spend", "ka", "ki", "ke", "me", "mein", "to", "at", "a", "the", "of", "₹")
+        val out = mutableListOf<Item>()
+        for (p in parts) {
+            val nums = Regex("(?<![a-z])(?:₹|rs\\.?\\s*)?(\\d[\\d,]*(?:\\.\\d+)?)\\s*(k)?(?![a-z0-9])").findAll(p).toList()
+            if (nums.size != 1) return null
+            val n = nums[0]
+            val amount = (n.groupValues[1].replace(",", "").toDoubleOrNull() ?: return null) * (if (n.groupValues[2] == "k") 1000 else 1)
+            if (amount <= 0 || amount > 10_000_000) return null
+            val words = p.removeRange(n.range).replace(Regex("[^a-z0-9 &'-]"), " ").split(" ").filter { it.isNotBlank() && it !in filler }
+            if (words.isEmpty() || words.size > 5) return null
+            val what = titleCase(words.joinToString(" "))
+            val cat = known.entries.firstOrNull { it.key.equals(what, true) }?.value ?: Categorizer.hint(what, categories) ?: "Other"
+            out += Item("debit", amount, what, date, cat, confident = cat != "Other")
+        }
+        return out
+    }
+
     fun fromNote(text: String, categories: List<String>, known: Map<String, String>, today: LocalDate): List<Item> {
+        quickNote(text, categories, known, today)?.let { return it }
         val o = ask(notePrompt(text, categories, known, today)) ?: return emptyList()
         return ((o["items"] as? List<Any?>) ?: emptyList()).mapNotNull { (it as? Map<String, Any?>)?.let { m -> toItem(m, text, categories, "debit") } }
     }

@@ -141,7 +141,7 @@ class Api(val engine: Engine, val model: LocalModel) {
             }
             // Quick Add: read several payments from a note without saving, so you can review them first.
             m == "POST" && p == listOf("parse") -> extractor.fromNote(b.str("text") ?: throw ApiError(400, "Type something first"), engine.allCategories(), engine.learnedMap(), today())
-                .filter { it.type in setOf("debit", "credit") }.map { mapOf("amount" to it.amount, "party" to it.party, "category" to it.category, "date" to (it.date ?: today()).toString(), "type" to it.type) }
+                .filter { it.type in setOf("debit", "credit") }.map { mapOf("amount" to it.amount, "party" to it.party, "category" to it.category, "date" to (it.date ?: today()).toString(), "type" to it.type, "confident" to it.confident) }
             // ---- streaks, envelopes, pace, groups ----
             m == "GET" && p == listOf("streak") -> extras.streak()
             m == "POST" && p == listOf("streak", "zero") -> extras.markZeroDay()

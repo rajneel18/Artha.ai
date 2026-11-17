@@ -36,6 +36,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.focus.focusRequester
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.text.NumberFormat
@@ -199,10 +200,17 @@ fun EmptyState(title: String, body: String, icon: @Composable () -> Unit) {
 }
 
 @Composable
-fun Field(value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier, number: Boolean = false, big: Boolean = false) {
-    OutlinedTextField(value, onChange, modifier.fillMaxWidth(), placeholder = { Text(placeholder, color = P.muted, style = if (big) T.amount else T.body) },
+fun Field(value: String, onChange: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier, number: Boolean = false, big: Boolean = false,
+          autoFocus: Boolean = false, onDone: (() -> Unit)? = null) {
+    val focus = remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    if (autoFocus) LaunchedEffect(Unit) { kotlinx.coroutines.delay(250); try { focus.requestFocus(); keyboard?.show() } catch (_: Exception) {} }
+    OutlinedTextField(value, onChange, modifier.fillMaxWidth().focusRequester(focus), placeholder = { Text(placeholder, color = P.muted, style = if (big) T.amount else T.body) },
         textStyle = (if (big) T.amount else T.body).copy(color = P.text), singleLine = !big || true, shape = RoundedCornerShape(18.dp),
-        keyboardOptions = if (number) androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Decimal) else androidx.compose.foundation.text.KeyboardOptions.Default,
+        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+            keyboardType = if (number) androidx.compose.ui.text.input.KeyboardType.Decimal else androidx.compose.ui.text.input.KeyboardType.Text,
+            imeAction = if (onDone != null) androidx.compose.ui.text.input.ImeAction.Done else androidx.compose.ui.text.input.ImeAction.Default),
+        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = { onDone?.invoke() }),
         colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = P.gold, unfocusedBorderColor = P.line, cursorColor = P.gold,
             focusedContainerColor = P.cardHi, unfocusedContainerColor = P.cardHi))
 }

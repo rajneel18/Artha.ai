@@ -48,8 +48,27 @@ fun AddExpenseSheet(date: java.time.LocalDate? = null, onDone: () -> Unit) {
         Segmented(listOf("Quick", "Manual"), mode) { mode = it }; Spacer(Modifier.height(14.dp))
         DayChooser(day) { day = it }; Spacer(Modifier.height(14.dp))
         if (mode == 0) {
-            Field(text, { text = it }, "chai 40, auto 120, groceries 850")
-            Text("Say several at once. Hinglish works too: \"200 chai aur 50 auto\".", style = T.small, color = P.muted, modifier = Modifier.padding(top = 8.dp))
+            fun add() {
+                val note = text.trim(); if (note.isEmpty() || busy) return
+                busy = true
+                act {
+                    @Suppress("UNCHECKED_CAST")
+                    val items = call("POST", "/api/parse", mapOf("text" to note)) as List<Map<String, Any?>>
+                    if (items.isEmpty()) { toast.show("Couldn't find an amount. Try \"70 lunch\""); return@act }
+                    val today = java.time.LocalDate.now()
+                    if (items.all { it["confident"] == true }) {
+                        // Clear enough: save straight away.
+                        for (r in items) call("POST", "/api/transactions", mapOf("amount" to r.d("amount"), "merchant" to r.s("party"), "category" to r.s("category"),
+                            "date" to (if (day != today) day.toString() else r.s("date"))))
+                        toast.show(if (items.size == 1) "Added ${rupees(items[0].d("amount"))} ${items[0].s("party")} · ${items[0].s("category")}" else "Added ${items.size} expenses")
+                    } else {
+                        pendingQuick = items; pendingQuickDay = if (day != today) day else java.time.LocalDate.parse(items[0].s("date")); nav.go("quick")
+                    }
+                }
+                onDone()
+            }
+            Field(text, { text = it }, "70 lunch, chai 20, auto 120", autoFocus = true, onDone = { add() })
+            Text("Several at once works too: \"200 chai aur 50 auto\".", style = T.small, color = P.muted, modifier = Modifier.padding(top = 8.dp))
             Spacer(Modifier.height(14.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.size(56.dp).clip(CircleShape).background(P.cardHi).tap { native.voice { text = it } }, contentAlignment = Alignment.Center) { GlyphIcon("mic", P.gold, 26.dp) }
@@ -61,25 +80,17 @@ fun AddExpenseSheet(date: java.time.LocalDate? = null, onDone: () -> Unit) {
                 }
             }
             Spacer(Modifier.height(14.dp))
-            GoldButton(if (busy) "Reading…" else "Review", enabled = text.isNotBlank() && !busy) {
-                busy = true
-                act {
-                    pendingQuick = call("POST", "/api/parse", mapOf("text" to text)) as List<Map<String, Any?>>
-                    pendingQuickDay = day
-                    nav.go("quick")
-                }
-                onDone()
-            }
+            GoldButton(if (busy) "Adding…" else "Add", enabled = text.isNotBlank() && !busy) { add() }
         } else {
-            Field(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, "₹0", number = true, big = true); Spacer(Modifier.height(10.dp))
-            Field(merchant, { merchant = it }, "Where or who? (Swiggy, Ramesh)"); Spacer(Modifier.height(14.dp))
+            Field(amount, { amount = it.filter { c -> c.isDigit() || c == '.' } }, "₹0", number = true, big = true, autoFocus = true); Spacer(Modifier.height(10.dp))
+            Field(merchant, { merchant = it }, "What or where? (lunch, Swiggy, Ramesh)"); Spacer(Modifier.height(14.dp))
             CategoryPicker(category) { category = it }
             EnvelopePicker(envelope) { envelope = it }
             Spacer(Modifier.height(16.dp))
             GoldButton("Save", enabled = (amount.toDoubleOrNull() ?: 0.0) > 0) {
                 act {
                     @Suppress("UNCHECKED_CAST")
-                    val tx = call("POST", "/api/transactions", mapOf("amount" to amount.toDouble(), "merchant" to merchant.ifBlank { "Cash" }, "category" to (category ?: "Other"), "date" to day.toString())) as? Map<String, Any?>
+                    val tx = call("POST", "/api/transactions", mapOf("amount" to amount.toDouble(), "merchant" to merchant.ifBlank { "Cash" }, "category" to category, "date" to day.toString())) as? Map<String, Any?>
                     if (envelope != null && tx != null) call("POST", "/api/transactions/${tx.l("id")}/envelope", mapOf("envelope_id" to envelope))
                     toast.show("Saved ${rupees(amount.toDouble())} to ${shortDay(day).lowercase().replaceFirstChar { it.uppercase() }}")
                 }

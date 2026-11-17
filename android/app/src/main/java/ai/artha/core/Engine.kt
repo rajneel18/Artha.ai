@@ -268,6 +268,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         val m = merchant.trim().take(60).ifBlank { "Unknown" }
         if (sameAutoCapture(amt, kind, source)) return@transaction null
         val cat = category ?: Categorizer.categorize(cleanNote, m, learned(), rulesTyped(), amt)
+            .let { if (it == "Other") Categorizer.hint("$m $cleanNote", allCategories()) ?: it else it }
         var reason: String? = null
         var dup: Long? = null
         if (kind == "debit") {
