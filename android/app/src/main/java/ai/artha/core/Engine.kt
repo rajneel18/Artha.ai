@@ -78,6 +78,18 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             }
             db.exec("INSERT INTO meta(key, value) VALUES('cleanup_version', '4') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         }
+        if (version < 5) {
+            // Names you gave in a payment's details weren't remembered for its UPI ID. Remember them now.
+            try {
+                for (r in db.query("SELECT d.upi_id AS upi, t.merchant AS merchant, t.category AS category FROM detected d JOIN transactions t ON t.id=d.tx_id " +
+                    "WHERE d.upi_id IS NOT NULL AND d.upi_id NOT IN (SELECT upi_id FROM payees) ORDER BY t.id")) {
+                    val name = r.s("merchant") ?: continue
+                    if (!needsName(name)) db.exec("INSERT INTO payees(upi_id, name, category) VALUES(?,?,?) ON CONFLICT(upi_id) DO UPDATE SET name=excluded.name, category=excluded.category",
+                        r.s("upi"), name.trim().take(60), r.s("category") ?: "Other")
+                }
+            } catch (_: Exception) {}
+            db.exec("INSERT INTO meta(key, value) VALUES('cleanup_version', '5') ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        }
     }
 
     // ---------------- settings & budget ----------------
@@ -749,7 +761,8 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
             db.exec("UPDATE detected SET status='skipped', reason='Old scheduled payment' WHERE id=?", id); return true
         }
         if (status == "analyzed" && it!!.confident && it.type != "upcoming" && v.reason == null && it.party != "Unknown" &&
-            ((history && settings()["auto_log_history"] != false && cat != "Other") || (!history && settings()["auto_log_confident"] == true))) logDetected(id, emptyMap())
+            ((history && settings()["auto_log_history"] != false && cat != "Other") || (!history && settings()["auto_log_confident"] == true) ||
+                (payee != null && it.type == "debit"))) logDetected(id, emptyMap()) // you named this payee before: no need to ask again
         if (status == "analyzed" && !history && it!!.type == "credit" && settings()["track_received"] != true)
             db.exec("UPDATE detected SET status='skipped', reason='Money received isn''t tracked (Settings)' WHERE id=?", id)
         return true
@@ -852,6 +865,18 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     }
 
     fun payees(): List<Row> = db.query("SELECT * FROM payees ORDER BY name")
+
+    /** The UPI ID a logged payment came from (if it came from a bank SMS). */
+    fun upiOfTx(txId: Long): String? = db.one("SELECT upi_id FROM detected WHERE tx_id=? AND upi_id IS NOT NULL", txId)?.s("upi_id")
+
+    /** Remembers a payment's current name and category for its UPI ID. */
+    fun rememberFromTx(txId: Long) {
+        val upi = upiOfTx(txId) ?: return
+        val t = db.one("SELECT merchant, category FROM transactions WHERE id=?", txId) ?: return
+        rememberPayee(upi, t.s("merchant") ?: return, t.s("category") ?: "Other")
+    }
+
+    fun isKnownPayee(upi: String?): Boolean = upi != null && db.one("SELECT 1 AS x FROM payees WHERE upi_id=?", upi) != null
 
     fun skipDetected(id: Long) = db.exec("UPDATE detected SET status='skipped', reason=COALESCE(reason, 'Skipped by you') WHERE id=?", id)
 

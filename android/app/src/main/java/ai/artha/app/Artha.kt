@@ -79,7 +79,7 @@ class Artha : Application() {
         val amount = "₹" + NumberFormat.getNumberInstance(Locale("en", "IN")).format(d.d("amount") ?: 0.0)
         val title = if (d.s("type") == "credit") "$amount received from ${d.s("party")}" else "$amount paid to ${d.s("party")}"
         val party = d.s("party") ?: ""
-        val unnamed = party == "Unknown" || party.startsWith("UPI ") || party.endsWith("QR shop") || party == "GPay merchant"
+        val unnamed = ai.artha.core.needsName(party)
         val ask = if (unnamed) "Who is this and what for?" else "What was it for?"
         val reply = NotificationCompat.Action.Builder(0, ask, action(ACTION_REPLY, id, true))
             .addRemoteInput(RemoteInput.Builder(KEY_PURPOSE).setLabel(if (unnamed) "e.g. Canteen, food" else "e.g. lunch, rent share, petrol").build())
@@ -93,6 +93,23 @@ class Artha : Application() {
             .addAction(reply)
             .addAction(0, "Log as ${d.s("category") ?: "Other"}", action(ACTION_ACCEPT, id, false))
             .addAction(0, "Skip", action(ACTION_SKIP, id, false)).build()
+        NotificationManagerCompat.from(this).notify(NOTIFY_BASE + id.toInt(), n)
+    }
+
+    /** A payee you've named before: logged without asking. "Change" lets you say what it was for this time. */
+    fun notifyLogged(d: Row) {
+        if (!canNotify()) return
+        val id = d.l("id") ?: return
+        val amount = "₹" + NumberFormat.getNumberInstance(Locale("en", "IN")).format(d.d("amount") ?: 0.0)
+        val change = NotificationCompat.Action.Builder(0, "Change", action(ACTION_REPLY, id, true))
+            .addRemoteInput(RemoteInput.Builder(KEY_PURPOSE).setLabel("What was it for this time? e.g. lunch").build())
+            .setAllowGeneratedReplies(false).build()
+        val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+        val n = NotificationCompat.Builder(this, CH_DETECTED).setSmallIcon(R.drawable.ic_stat_rupee)
+            .setContentTitle("$amount paid to ${d.s("party")}").setContentText("Logged as ${d.s("category") ?: "Other"}")
+            .setContentIntent(open).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setSilent(true)
+            .addAction(change).build()
         NotificationManagerCompat.from(this).notify(NOTIFY_BASE + id.toInt(), n)
     }
 

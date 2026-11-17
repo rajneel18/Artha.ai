@@ -129,8 +129,8 @@ class EngineTest {
         val before = model.calls
         receive(QR_115.replace("115.00", "60.00").replace("631644270678", "631644270999"))
         assertEquals("the AI isn't used for a known payee", before, model.calls)
-        val next = items().first { it["amount"] == 60.0 }
-        assertEquals("College Canteen", next["party"]); assertEquals("Food & Dining", next["category"]); assertEquals(1L, next["confident"])
+        val next = txs().first { it["amount"] == 60.0 }  // known payee: logged straight away
+        assertEquals("College Canteen", next["merchant"]); assertEquals("Food & Dining", next["category"])
         // "Mom, gift" in the notification reply names the number and logs it
         model.answers["Purpose: gift"] = """{"category": "Shopping"}"""
         val tx = call("POST", "/api/detected/${byAmount[1.0]!!["id"]}", mapOf("action" to "purpose", "purpose" to "Mom, gift")) as Map<String, Any?>
@@ -317,6 +317,21 @@ class EngineTest {
         // typed without a category: the word decides
         val tx = call("POST", "/api/transactions", mapOf("amount" to 70, "merchant" to "lunch")) as Map<String, Any?>
         assertEquals("Food & Dining", tx["category"])
+    }
+
+    @Test fun renamingAPaymentRemembersThePayee() {
+        model.answers["bhqr"] = """{"type": "debit", "amount": 115, "party": "Bhqr", "category": "Shopping"}"""
+        receive(QR_115)
+        val d = items().single()
+        val tx = call("POST", "/api/detected/${d["id"]}", mapOf("action" to "log")) as Map<String, Any?>
+        // named later from the payment's details screen
+        call("PATCH", "/api/transactions/${tx["id"]}", mapOf("merchant" to "Chai", "category" to "Snacks"))
+        val before = model.calls
+        receive(QR_115.replace("115.00", "20.00").replace("631644270678", "631644270111"))
+        assertEquals("no AI for a named payee", before, model.calls)
+        assertTrue("logged without asking", items().isEmpty())
+        val last = txs().first()
+        assertEquals("Chai", last["merchant"]); assertEquals("Snacks", last["category"]); assertEquals(20.0, last["amount"])
     }
 
     @Test fun answerWhatWasItFor() {

@@ -1,5 +1,6 @@
 package ai.artha.app
 
+import ai.artha.core.s
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -65,7 +66,10 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
         // Ask about new live SMS payments right away; imported history is reviewed in the app instead.
         val fresh = engine.db.query("SELECT * FROM detected WHERE id > ? AND source='sms' AND status IN ('analyzed','logged') " +
             "AND type IN ('debit','credit') ORDER BY id", lastSeen)
-        if (fresh.size in 1..3) fresh.forEach { app.askPurpose(it) } else if (fresh.size > 3) app.notifyDetected(fresh.size)
+        if (fresh.size in 1..3) fresh.forEach {
+            // Named before and already logged: just say so. Otherwise ask.
+            if (it.s("status") == "logged" && engine.isKnownPayee(it.s("upi_id"))) app.notifyLogged(it) else app.askPurpose(it)
+        } else if (fresh.size > 3) app.notifyDetected(fresh.size)
         return Result.success()
     }
 

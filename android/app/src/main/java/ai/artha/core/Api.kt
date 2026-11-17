@@ -225,6 +225,8 @@ class Api(val engine: Engine, val model: LocalModel) {
             engine.setCategory(id, it)
             db.exec("UPDATE transactions SET needs_review=0, review_reason=NULL WHERE id=? AND review_reason IN ('uncategorized','low_confidence')", id)
         }
+        // Named or re-categorized a UPI payment: remember it for that UPI ID, so the next payment there is known.
+        if (b.str("merchant") != null || b.str("category") != null) engine.rememberFromTx(id)
         return engine.row(id)
     }
 
