@@ -76,7 +76,7 @@ class AnalyzeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
 
     private fun progressInfo(text: String, done: Int, total: Int): ForegroundInfo {
         val n = NotificationCompat.Builder(applicationContext, Artha.CH_WORK).setSmallIcon(R.drawable.ic_stat_rupee)
-            .setContentTitle("Artha").setContentText(text).setOngoing(true).setSilent(true)
+            .setContentTitle("PAISAve").setContentText(text).setOngoing(true).setSilent(true)
             .setProgress(total, done, total == 0).build()
         return ForegroundInfo(42, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
     }
@@ -124,7 +124,7 @@ class ModelDownloadWorker(ctx: Context, params: WorkerParameters) : CoroutineWor
     override suspend fun getForegroundInfo() = info(0)
 
     private fun info(pct: Int) = ForegroundInfo(43, NotificationCompat.Builder(applicationContext, Artha.CH_WORK)
-        .setSmallIcon(R.drawable.ic_stat_rupee).setContentTitle("Downloading Artha's AI model").setContentText("$pct%")
+        .setSmallIcon(R.drawable.ic_stat_rupee).setContentTitle("Downloading PAISAve's AI model").setContentText("$pct%")
         .setOngoing(true).setSilent(true).setProgress(100, pct, false).build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
 
     companion object {
@@ -166,7 +166,7 @@ class PurposeWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
                     else app.api.engine.logWithPurpose(id, purpose, app.api.extractor)?.let { "Logged as ${it["category"]}" } ?: "Logged"
                 }
             }
-        } catch (e: Exception) { "Couldn't log it. Open Artha to review" } finally { app.model.release() }
+        } catch (e: Exception) { "Couldn't log it. Open PAISAve to review" } finally { app.model.release() }
         app.finishPurpose(id, result)
         return Result.success()
     }

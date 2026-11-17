@@ -11,7 +11,7 @@ import kotlin.math.min
 import kotlin.math.roundToLong
 
 /**
- * Everything Artha knows how to do, running entirely on the phone.
+ * Everything PAISAve knows how to do, running entirely on the phone.
  *
  * A payment flows: captured (SMS / notification / share / voice / receipt / typed) -> redacted -> categorized
  * -> checked for duplicates and subscriptions -> split -> flagged for a question only when unsure -> stored,
@@ -594,14 +594,17 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         val aliases = mapOf("food" to "Food & Dining", "eating out" to "Food & Dining", "dining" to "Food & Dining", "grocer" to "Groceries",
             "travel" to "Travel", "cab" to "Transport", "transport" to "Transport", "petrol" to "Fuel", "fuel" to "Fuel", "shopping" to "Shopping",
             "bill" to "Bills & Utilities", "rent" to "Rent", "movie" to "Entertainment", "entertainment" to "Entertainment", "health" to "Health",
-            "medic" to "Health", "subscription" to "Entertainment")
+            "medic" to "Health", "subscription" to "Entertainment", "snack" to "Snacks", "transfer" to "Transfers", "invest" to "Investments",
+            "education" to "Education", "college" to "Education", "salon" to "Personal Care", "haircut" to "Personal Care", "recharge" to "Bills & Utilities")
         for (c in cats) if (c.lowercase() in q) pc += c
         for ((k, c) in aliases) if (k in q && c !in pc && c in cats) pc += c
         if (pc.isEmpty()) {
             val stop = setOf("how", "much", "did", "i", "spend", "spent", "on", "at", "in", "the", "this", "last", "month", "week", "what", "my",
                 "show", "me", "all", "total", "for", "today", "yesterday", "many", "times", "pay", "paid", "to", "year", "days", "over", "under",
                 "above", "below", "than", "more", "less", "expenses", "expense", "payments", "transactions", "find", "list", "a", "was", "were",
-                "with", "and", "count") + MONTHS + MONTHS.map { it.take(3) }
+                "with", "and", "count", "spending", "money", "so", "far", "since", "which", "who", "when", "give", "tell", "about", "is", "are",
+                "it", "any", "of", "from", "by", "do", "does", "have", "has", "i've", "ive", "whats", "what's", "every", "each", "weeks", "months",
+                "please", "can", "you", "us", "we", "rs", "rupees", "inr", "up", "get", "got", "bought", "buy", "on") + MONTHS + MONTHS.map { it.take(3) }
             val words = Regex("[a-z][a-z0-9.&'-]+").findAll(q).map { it.value }.filter { it !in stop }.take(3).toList()
             if (words.isNotEmpty()) plan["text"] = words.joinToString(" ")
         }
@@ -629,20 +632,46 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         return mapOf("total" to round2(tot.d("t")!!), "count" to tot.l("c"), "by_category" to byCat, "transactions" to rows)
     }
 
+    /** True when the quick reader understood nothing specific (no dates, categories, amounts or words to search). */
+    @Suppress("UNCHECKED_CAST")
+    fun isVague(plan: Map<String, Any?>): Boolean = plan["date_from"] == null && (plan["categories"] as? List<*>).isNullOrEmpty() &&
+        plan["merchant"] == null && plan["text"] == null && plan["min_amount"] == null && plan["max_amount"] == null
+
+    /** "today", "yesterday", "in November", "this week", "from 3 Nov to 9 Nov". */
+    fun spanLabel(from: String?, to: String?): String {
+        if (from == null) return "overall"
+        val t = today(); val a = LocalDate.parse(from); val b = to?.let { LocalDate.parse(it) } ?: t
+        fun short(d: LocalDate) = "${d.dayOfMonth} ${d.month.name.lowercase().replaceFirstChar { it.uppercase() }.take(3)}" + if (d.year != t.year) " ${d.year}" else ""
+        val monthName = a.month.name.lowercase().replaceFirstChar { it.uppercase() } + if (a.year != t.year) " ${a.year}" else ""
+        return when {
+            a == b && a == t -> "today"
+            a == b && a == t.minusDays(1) -> "yesterday"
+            a == b -> "on ${short(a)}"
+            a.dayOfMonth == 1 && (b == a.plusMonths(1).minusDays(1) || (b == t && a.month == t.month && a.year == t.year)) ->
+                if (a.month == t.month && a.year == t.year) "this month" else "in $monthName"
+            a.dayOfWeek.value == 1 && b == t && t.toEpochDay() - a.toEpochDay() < 7 -> "this week"
+            else -> "from ${short(a)} to ${short(b)}"
+        }
+    }
+
     @Suppress("UNCHECKED_CAST")
     fun describe(plan: Map<String, Any?>, r: Map<String, Any?>): String {
         val what = (plan["categories"] as? List<String>)?.takeIf { it.isNotEmpty() }?.joinToString(", ")
-            ?: plan["merchant"] as? String ?: plan["text"] as? String ?: "everything"
-        val from = plan["date_from"] as? String; val to = plan["date_to"] as? String
-        val whenS = when { from != null && from == to -> " on $from"; from != null -> " from $from to ${to ?: "today"}"; else -> "" }
+            ?: plan["merchant"] as? String ?: (plan["text"] as? String)?.let { "\"$it\"" } ?: "everything"
+        val whenS = (plan["date_from"] as? String)?.let { " " + spanLabel(it, plan["date_to"] as? String) } ?: ""
         val n = (r["count"] as Long)
         val verb = if (plan["kind"] == "credit") "received" else "spent"
-        if (n == 0L) return "No matching transactions for $what$whenS."
-        if (plan["aggregate"] == "count") return "$n payment${if (n != 1L) "s" else ""} for $what$whenS."
+        if (n == 0L) return "I couldn't find any payments for $what$whenS. Try other words, like the shop's name or a category."
+        val rows = (r["transactions"] as List<Map<String, Any?>>)
+        fun line(t: Map<String, Any?>) = "• ${spanLabel(t["date"] as String, t["date"] as String).removePrefix("on ").replaceFirstChar { it.uppercase() }}  " +
+            "${t["merchant"]}  ${rupees(((t["my_share"] ?: t["amount"]) as Number).toDouble())}"
+        val list = rows.take(5).joinToString("\n", prefix = "\n") { line(it) } + if (n > 5) "\n…and ${n - 5} more" else ""
+        if (plan["aggregate"] == "count") return "$n payment${if (n != 1L) "s" else ""} for $what$whenS.$list"
         val bc = r["by_category"] as List<Map<String, Any?>>
         if (plan["aggregate"] == "by_category" && bc.isNotEmpty())
-            return "Breakdown$whenS: " + bc.take(6).joinToString(", ") { "${it["category"]} ${rupees(it["total"] as Double)}" }
-        return "You $verb ₹${"%,.2f".format(r["total"] as Double)} on $what$whenS ($n transaction${if (n != 1L) "s" else ""})."
+            return "Breakdown$whenS:\n" + bc.take(8).joinToString("\n") { "• ${it["category"]}: ${rupees(it["total"] as Double)}" }
+        if (plan["aggregate"] == "list") return "$n payment${if (n != 1L) "s" else ""} for $what$whenS, ${rupees(r["total"] as Double)} in total.$list"
+        return "You $verb ${rupees(r["total"] as Double)} on $what$whenS ($n payment${if (n != 1L) "s" else ""}).$list"
     }
 
     // ---------------- deletion ----------------
@@ -855,7 +884,7 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
     /** Replaces everything with a backup made by "Full backup" (export.json). Unknown tables/columns are ignored. */
     @Suppress("UNCHECKED_CAST")
     fun restore(backup: Map<String, Any?>): Long {
-        if ((backup["transactions"] as? List<*>) == null) throw ApiError(400, "That isn't an Artha backup file")
+        if ((backup["transactions"] as? List<*>) == null) throw ApiError(400, "That isn't an PAISAve backup file")
         db.transaction {
             ALL_TABLES.forEach { db.exec("DELETE FROM $it") }
             for (table in ALL_TABLES.reversed()) { // parents (transactions) before children (splits)

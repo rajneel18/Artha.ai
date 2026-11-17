@@ -96,7 +96,7 @@ private fun SetupCard(st: Map<String, Any?>) {
 private fun CrashCard(report: String) {
     val native = LocalNative.current; val toast = LocalToast.current; val refresh = LocalRefresh.current
     Card(Modifier.padding(bottom = 16.dp), border = P.red.copy(alpha = 0.5f)) {
-        Text("Artha stopped last time", style = T.title.copy(fontSize = 18.sp), color = P.text)
+        Text("PAISAve stopped last time", style = T.title.copy(fontSize = 18.sp), color = P.text)
         Text("It has switched to a safer mode. Copy the report to send it.", style = T.body, color = P.muted)
         Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             GhostButton("Copy report", color = P.gold) { native.copy(report); toast.show("Report copied") }
@@ -191,7 +191,7 @@ private fun StreakCard(s: Map<String, Any?>?) {
 private fun Tools() {
     val nav = LocalNav.current
     SectionTitle("Tools")
-    val tools = listOf(Triple("Daily Log", "list", "daily"), Triple("Ask Artha", "chat", "ask"), Triple("Money Story", "sparkle", "story"),
+    val tools = listOf(Triple("Daily Log", "list", "daily"), Triple("Ask PAISAve", "chat", "ask"), Triple("Money Story", "sparkle", "story"),
         Triple("Envelopes", "envelope", "envelopes"), Triple("Recurring", "repeat", "recurring"), Triple("Budgets", "sliders", "categories"))
     tools.chunked(3).forEach { row ->
         Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

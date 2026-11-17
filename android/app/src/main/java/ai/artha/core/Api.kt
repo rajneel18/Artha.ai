@@ -127,8 +127,8 @@ class Api(val engine: Engine, val model: LocalModel) {
             m == "GET" && p == listOf("recommendations") -> engine.recommendations(month(q))
 
             // ---- your data ----
-            m == "GET" && p == listOf("export.csv") -> mapOf("filename" to "artha-transactions.csv", "mime" to "text/csv", "content" to exportCsv())
-            m == "GET" && p == listOf("export.json") -> mapOf("filename" to "artha-backup.json", "mime" to "application/json",
+            m == "GET" && p == listOf("export.csv") -> mapOf("filename" to "paisave-transactions.csv", "mime" to "text/csv", "content" to exportCsv())
+            m == "GET" && p == listOf("export.json") -> mapOf("filename" to "paisave-backup.json", "mime" to "application/json",
                 "content" to toJson(engine.ALL_TABLES.associateWith { db.query("SELECT * FROM $it") }).toString())
             m == "POST" && p == listOf("data", "delete") -> {
                 if (b.str("confirm") != "DELETE") throw ApiError(400, "Type DELETE to confirm")
@@ -136,7 +136,7 @@ class Api(val engine: Engine, val model: LocalModel) {
             }
             m == "POST" && p == listOf("data", "restore") -> {
                 if (b.str("confirm") != "RESTORE") throw ApiError(400, "Type RESTORE to confirm")
-                val backup = try { parseBody(b.str("content")) } catch (e: Exception) { throw ApiError(400, "That isn't an Artha backup file") }
+                val backup = try { parseBody(b.str("content")) } catch (e: Exception) { throw ApiError(400, "That isn't an PAISAve backup file") }
                 mapOf("ok" to true, "transactions" to engine.restore(backup))
             }
             // Quick Add: read several payments from a note without saving, so you can review them first.
@@ -295,14 +295,73 @@ class Api(val engine: Engine, val model: LocalModel) {
         return engine.subscriptions()
     }
 
+    private val aiPool = java.util.concurrent.Executors.newSingleThreadExecutor { r -> Thread(r, "ask-ai").apply { isDaemon = true } }
+
+    /**
+     * Answers from your data straight away. The AI is only used for questions the quick reader can't make sense of,
+     * and never holds the answer up for more than a few seconds (it may be busy reading SMS).
+     */
     private fun ask(question: String): Map<String, Any?> {
         val q = question.trim().take(500)
+        if (q.isEmpty()) throw ApiError(400, "Ask a question")
+        quickAnswer(q)?.let { return mapOf("answer" to it, "used_ai" to false, "transactions" to emptyList<Any>()) }
+        var plan: Map<String, Any?> = engine.localPlan(q)
+        var r = engine.runPlan(plan)
         var usedAi = false
-        var plan: Map<String, Any?>? = null
-        if (model.available()) try { plan = extractor.plan(q, engine.allCategories(), today()); usedAi = plan != null } catch (_: Exception) {}
-        val pl = plan ?: engine.localPlan(q)
-        val r = engine.runPlan(pl)
-        return mapOf("answer" to engine.describe(pl, r), "plan" to pl, "used_ai" to usedAi) + r
+        // "how much on chai" found nothing by name? Try the category the word belongs to (chai -> Snacks).
+        // "chai" also means its category (Snacks): use that when it finds more than the word alone.
+        if (plan["text"] != null && (plan["categories"] as? List<*>).isNullOrEmpty()) Categorizer.hint(plan["text"] as String, engine.allCategories())?.let { c ->
+            val p2 = plan + mapOf("text" to null, "categories" to listOf(c))
+            val r2 = engine.runPlan(p2); if ((r2["count"] as Long) > (r["count"] as Long)) { plan = p2; r = r2 }
+        }
+        if ((engine.isVague(plan) || (r["count"] as Long) == 0L) && model.available()) try {
+            val f = aiPool.submit<Map<String, Any?>?> { extractor.plan(q, engine.allCategories(), today()) }
+            f.get(12, java.util.concurrent.TimeUnit.SECONDS)?.let { p ->
+                val r2 = engine.runPlan(p)
+                if ((r2["count"] as Long) > 0 || (r["count"] as Long) == 0L) { plan = p; r = r2; usedAi = true }
+            }
+        } catch (_: Exception) {}
+        return mapOf("answer" to engine.describe(plan, r), "plan" to plan, "used_ai" to usedAi) + r
+    }
+
+    /** Budget, biggest spend, favourite places, daily average: answered without searching. */
+    @Suppress("UNCHECKED_CAST")
+    private fun quickAnswer(question: String): String? {
+        val q = question.lowercase()
+        fun has(r: String) = Regex(r).containsMatchIn(q)
+        fun inr(x: Double) = "₹" + java.text.NumberFormat.getIntegerInstance(java.util.Locale("en", "IN")).format(Math.round(x))
+        val month = today().toString().take(7)
+        if (has("^(hi|hello|hey|help|what can you do)\\b")) return "Ask me things like:\n• How much did I spend on food this month?\n• Chai last week\n" +
+            "• How much is left today?\n• Biggest expense in October\n• Where do I spend the most?\n• Payments over 500 yesterday"
+        if (has("\\b(left|remaining|can i (still )?spend|how much (more )?can i|budget)\\b") && !has("\\b(on|at|for) [a-z]")) {
+            val d = engine.daily(today()); val p = extras.pace()
+            val dl = (d["left"] as Double)
+            return (if (dl >= 0) "Today: ${inr(dl)} left of your ${inr(d["allowance"] as Double)} daily budget." else "Today: ${inr(-dl)} over your ${inr(d["allowance"] as Double)} daily budget.") +
+                "\nThis month: ${inr(p["remaining"] as Double)} left of ${inr(p["budget"] as Double)}, about ${inr(p["safe_per_day"] as Double)} a day for the ${p["days_left"]} days to go." +
+                "\n${p["headline"]}"
+        }
+        val plan = engine.localPlan(question)
+        val from = plan["date_from"] as String? ?: "$month-01"; val to = plan["date_to"] as String? ?: today().toString()
+        val span = engine.spanLabel(from, to)
+        if (has("\\b(biggest|largest|most expensive|highest|costliest)\\b")) {
+            val r = engine.db.one("SELECT merchant, date, ${Engine.SPEND} AS a, category FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ? ORDER BY a DESC LIMIT 1", from, to)
+                ?: return "No spending $span yet."
+            return "Your biggest expense $span was ${inr(r.d("a") ?: 0.0)} at ${r.s("merchant")} (${r.s("category")}) on ${engine.spanLabel(r.s("date")!!, r.s("date")!!).removePrefix("on ")}."
+        }
+        if (has("\\b(where|which (shop|place|merchant)s?|top (places|shops|merchants)|most often|favou?rite)\\b")) {
+            val cats = (plan["categories"] as? List<String>).orEmpty()
+            val rows = engine.db.query("SELECT merchant, COUNT(*) AS c, SUM(${Engine.SPEND}) AS t FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ? " +
+                (if (cats.isEmpty()) "" else "AND category IN (${cats.joinToString(",") { "?" }}) ") +
+                "GROUP BY lower(merchant) ORDER BY t DESC LIMIT 15", from, to, *cats.toTypedArray()).filter { !needsName(it.s("merchant")) }.take(5)
+            if (rows.isEmpty()) return "No named places $span yet."
+            return "Where your ${if (cats.isEmpty()) "money" else cats.joinToString(", ")} went $span:\n" + rows.joinToString("\n") { "• ${it.s("merchant")}: ${inr(it.d("t") ?: 0.0)} (${it.l("c")}×)" }
+        }
+        if (has("\\b(average|per day|a day|daily)\\b")) {
+            val total = engine.db.num("SELECT COALESCE(SUM(${Engine.SPEND}),0) FROM transactions WHERE kind='debit' AND date BETWEEN ? AND ?", from, to)
+            val days = java.time.temporal.ChronoUnit.DAYS.between(LocalDate.parse(from), minOf(LocalDate.parse(to), today())) + 1
+            return "You spent ${inr(total)} $span, about ${inr(total / days.coerceAtLeast(1))} a day."
+        }
+        return null
     }
 
     // ---------------- CSV ----------------

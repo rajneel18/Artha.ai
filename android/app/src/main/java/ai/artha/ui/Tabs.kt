@@ -100,7 +100,7 @@ fun SplitsTab() {
         item { Segmented(listOf("Friends", "Groups"), segment) { segment = it } }
         if (segment == 0) {
             val people = f?.list("friends") ?: emptyList()
-            if (people.isEmpty()) item { Spacer(Modifier.height(16.dp)); Card { EmptyState("Never forget who you owe", "Split a payment with anyone. They don't need Artha. Track who owes what, to the rupee.") { GlyphIcon("people", P.gold, 56.dp) } } }
+            if (people.isEmpty()) item { Spacer(Modifier.height(16.dp)); Card { EmptyState("Never forget who you owe", "Split a payment with anyone. They don't need PAISAve. Track who owes what, to the rupee.") { GlyphIcon("people", P.gold, 56.dp) } } }
             else items(people, key = { it.s("person") }) { p ->
                 Spacer(Modifier.height(12.dp))
                 Card(pad = 16.dp) {
@@ -207,7 +207,7 @@ fun AnalyticsTab() {
         }
         item {
             SectionTitle("Tools")
-            listOf(listOf(Triple("Ask Artha", "chat", "ask"), Triple("Money Story", "sparkle", "story")),
+            listOf(listOf(Triple("Ask PAISAve", "chat", "ask"), Triple("Money Story", "sparkle", "story")),
                 listOf(Triple("Recurring", "repeat", "recurring"), Triple("Envelopes", "envelope", "envelopes")),
                 listOf(Triple("Streak", "flame", "streak"), Triple("Budgets", "sliders", "categories"))).forEach { row ->
                 Row(Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {

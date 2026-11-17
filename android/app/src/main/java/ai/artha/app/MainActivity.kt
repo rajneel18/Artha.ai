@@ -96,7 +96,7 @@ class MainActivity : AppCompatActivity(), Native {
 
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); handleShare(intent) }
 
-    /** "Share" a bank SMS to Artha from Messages: it goes to the Detected list like any other SMS. */
+    /** "Share" a bank SMS to PAISAve from Messages: it goes to the Detected list like any other SMS. */
     private fun handleShare(i: Intent?) {
         val text = if (i?.action == Intent.ACTION_SEND) i.getStringExtra(Intent.EXTRA_TEXT) else null
         if (text.isNullOrBlank()) return
@@ -117,7 +117,7 @@ class MainActivity : AppCompatActivity(), Native {
         BiometricPrompt(this, ContextCompat.getMainExecutor(this), object : BiometricPrompt.AuthenticationCallback() {
             override fun onAuthenticationSucceeded(r: BiometricPrompt.AuthenticationResult) { unlocked = true; lastStop = 0; locked = false }
             override fun onAuthenticationError(code: Int, msg: CharSequence) { if (!unlocked) finish() }
-        }).authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Unlock Artha").setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL).build())
+        }).authenticate(BiometricPrompt.PromptInfo.Builder().setTitle("Unlock PAISAve").setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL).build())
     }
 
     // ---------------- Native ----------------
@@ -146,7 +146,7 @@ class MainActivity : AppCompatActivity(), Native {
     override fun deleteModel() { app.model.release(); QwenModel.file(this).delete() }
     override fun analyze() { AnalyzeWorker.start(this) }
     override fun clipboard(): String = (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(this)?.toString() ?: ""
-    override fun copy(text: String) = (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("Artha", text))
+    override fun copy(text: String) = (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("PAISAve", text))
     override fun clearCrash() = CrashGuard.clear(this)
     override fun scheduleReminder() = Reminder.schedule(this)
 

@@ -20,7 +20,7 @@ object CrashGuard {
         prefs(app).edit().remove("off_cpu").apply()
         prefs(app).getString("in_step", null)?.takeIf { it != "cpu" }?.let { step ->
             prefs(app).edit().putBoolean("off_$step", true).remove("in_step").apply()
-            save(app, "The app stopped while running \"$step\" in the AI library. Artha switched to a safer mode for it.")
+            save(app, "The app stopped while running \"$step\" in the AI library. PAISAve switched to a safer mode for it.")
         }
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
@@ -38,7 +38,7 @@ object CrashGuard {
     }
 
     fun describe(e: Throwable): String = buildString {
-        append("Artha ").append(android.os.Build.MODEL).append(" Android ").append(android.os.Build.VERSION.RELEASE).append('\n')
+        append("PAISAve ").append(android.os.Build.MODEL).append(" Android ").append(android.os.Build.VERSION.RELEASE).append('\n')
         append(e.toString()).append('\n')
         e.stackTrace.take(25).forEach { append("  at ").append(it).append('\n') }
         var cause = e.cause

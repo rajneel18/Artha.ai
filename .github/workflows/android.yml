@@ -36,5 +36,5 @@ jobs:
         run: gradle assembleRelease --no-daemon
       - uses: actions/upload-artifact@v4
         with:
-          name: artha-apk
+          name: PAISAve-apk
           path: android/app/build/outputs/apk/release/app-release.apk

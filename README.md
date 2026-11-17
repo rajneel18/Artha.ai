@@ -1,12 +1,14 @@
-# Artha · Spending tracker for Android
+# PAISAve · Spending tracker for Android
 
-Artha reads your bank SMS with a **small AI model that runs on your phone** (Qwen 2.5 1.5B). There's no server, no account and no cloud AI. Your messages never leave the phone.
+*PAISA + save = PAISAve.*
+
+PAISAve reads your bank SMS with a **small AI model that runs on your phone** (Qwen 2.5 1.5B). There's no server, no account and no cloud AI. Your messages never leave the phone.
 
 **How it works:** you pay → your bank sends an SMS → the on-device AI reads it (amount, who you paid, category) → a safety check makes sure OTPs, failed payments and scheduled AutoPay are never counted as spending → the payment appears under **Detected payments**, where you tap **Log** or **Skip**, or **Log all** at once. Logging updates your ledger, today's allowance and your Savings Pool.
 
 ## Install
-1. Download [`releases/artha.apk`](releases/artha.apk) on your phone and open it. Allow installs from your browser or Files app.
-2. In Artha → **Settings → On-device AI**, tap **Download**. This is a one-time 1.6 GB file, so use Wi-Fi.
+1. Download [`releases/PAISAve.apk`](releases/PAISAve.apk) on your phone and open it. Allow installs from your browser or Files app.
+2. In PAISAve → **Settings → On-device AI**, tap **Download**. This is a one-time 1.6 GB file, so use Wi-Fi.
 3. In **Settings → Bank SMS**, tap **Allow**. If Android says **"Restricted setting"**, open App info (the link is in Settings) → three-dot menu → **Allow restricted settings**, then try again.
 4. Optional: **Import past SMS** (1 to 12 months) or **Import statement** (CSV or text). Everything goes through the same Detected list.
 
@@ -34,11 +36,11 @@ You need JDK 17+ and the Android SDK (platform 35). To sign with your own key, c
 
 GitHub Actions (`.github/workflows/android.yml`) runs the tests and builds the APK on every push. To sign CI builds with your own key, add the repository secrets `ANDROID_KEYSTORE_BASE64` and `ANDROID_KEYSTORE_PASSWORD`.
 
-To try the UI in a desktop browser with the real engine behind it, run `ARTHA_DEVSERVER=600 gradle testDebugUnitTest --tests '*DevServer*'` and open http://127.0.0.1:8130.
-
 ## How the code is organised
 | Path | What it is |
 |---|---|
-| `android/app/src/main/java/ai/artha/core/` | The engine, in plain Kotlin: the AI extractor and safety check, the Detected queue, ledger, budget and Savings Pool, recurring payments, insights, and the API the UI calls. It's tested on the JVM with a stand-in model. |
+| `android/app/src/main/java/ai/artha/core/` | The engine, in plain Kotlin: the AI extractor and safety check, the Detected queue, ledger, daily and monthly budgets, recurring payments, insights, and the API the UI calls. It's tested on the JVM with a stand-in model. |
 | `android/app/src/main/java/ai/artha/app/` | The Android side: SQLite storage, SMS receiver, background AI worker, model download, the Qwen runner (MediaPipe), the screen and its bridge, and app lock. |
-| `android/app/src/main/assets/index.html` | The UI, bundled inside the APK. |
+| `android/app/src/main/java/ai/artha/ui/` | The screens, in Jetpack Compose: Home, Daily log, Detected payments, Splits, Analytics, Ask PAISAve, Money Story and Settings. |
+
+The Android package is still `ai.artha.app` so installed copies update in place and keep their data.

@@ -40,7 +40,7 @@ class Artha : Application() {
         }
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_DETECTED, "Payments detected", NotificationManager.IMPORTANCE_DEFAULT).apply {
-            description = "When Artha finds payments in your bank SMS for you to confirm"
+            description = "When PAISAve finds payments in your bank SMS for you to confirm"
         })
         nm.createNotificationChannel(NotificationChannel(CH_ASK, "What was it for?", NotificationManager.IMPORTANCE_HIGH).apply {
             description = "Pops up after a payment so you can say what it was for"
@@ -58,7 +58,7 @@ class Artha : Application() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val text = if (count == 1) "1 payment detected. Tap to review" else "$count payments detected. Tap to review"
         NotificationManagerCompat.from(this).notify(7, NotificationCompat.Builder(this, CH_DETECTED).setSmallIcon(R.drawable.ic_stat_rupee)
-            .setContentTitle("Artha").setContentText(text).setContentIntent(open).setAutoCancel(true)
+            .setContentTitle("PAISAve").setContentText(text).setContentIntent(open).setAutoCancel(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).build())
     }
 
@@ -84,7 +84,7 @@ class Artha : Application() {
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val n = NotificationCompat.Builder(this, CH_ASK).setSmallIcon(R.drawable.ic_stat_rupee).setContentTitle(title)
-            .setContentText(if (unnamed) "$ask Name it once and Artha remembers this payee" else "$ask Reply and Artha picks the category")
+            .setContentText(if (unnamed) "$ask Name it once and PAISAve remembers this payee" else "$ask Reply and PAISAve picks the category")
             .setPriority(NotificationCompat.PRIORITY_HIGH).setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setContentIntent(open).setAutoCancel(true).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(reply)
@@ -98,7 +98,7 @@ class Artha : Application() {
         if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         val nm = NotificationManagerCompat.from(this)
         nm.notify(NOTIFY_BASE + id.toInt(), NotificationCompat.Builder(this, CH_DETECTED).setSmallIcon(R.drawable.ic_stat_rupee)
-            .setContentTitle("Artha").setContentText(text).setSilent(true).apply { if (!keep) setTimeoutAfter(5000) }.build())
+            .setContentTitle("PAISAve").setContentText(text).setSilent(true).apply { if (!keep) setTimeoutAfter(5000) }.build())
     }
 
     companion object {

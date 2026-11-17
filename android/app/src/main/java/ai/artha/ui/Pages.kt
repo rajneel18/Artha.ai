@@ -82,7 +82,7 @@ private fun DetectedCard(d: Map<String, Any?>) {
             }
             Text(rupees(d.d("amount")), style = T.title, color = P.text)
         }
-        if (placeholder(d.s("party"))) { Spacer(Modifier.height(10.dp)); Field(name, { name = it }, "Who is this? Artha remembers it") }
+        if (placeholder(d.s("party"))) { Spacer(Modifier.height(10.dp)); Field(name, { name = it }, "Who is this? PAISAve remembers it") }
         Spacer(Modifier.height(10.dp))
         Text(category, style = T.label, color = P.gold, modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(P.goldSoft).tap { showCats = !showCats }.padding(horizontal = 14.dp, vertical = 8.dp))
         if (showCats) { Spacer(Modifier.height(10.dp)); CategoryPicker(category) { category = it; showCats = false } }
@@ -161,30 +161,43 @@ fun QuickAddPage() {
     }
 }
 
-// ---------------- Ask Artha ----------------
+// ---------------- Ask PAISAve ----------------
 @Composable
 fun AskPage() {
     val repo = LocalRepo.current; val scope = rememberCoroutineScope()
-    val chat = remember { mutableStateListOf("Ask me about your spending. Try \"how much on food last month?\" or \"uber over 300\"." to false) }
-    var q by remember { mutableStateOf("") }; val state = rememberLazyListState()
+    val chat = remember { mutableStateListOf("Ask me anything about your spending. I read your own data on the phone, so answers are instant." to false) }
+    var q by remember { mutableStateOf("") }; var thinking by remember { mutableStateOf(false) }; val state = rememberLazyListState()
+    val examples = listOf("How much is left today?", "Food this month", "Chai last week", "Biggest expense this month", "Where do I spend the most?", "Breakdown last month")
+    fun send(text: String) {
+        val question = text.trim(); if (question.isEmpty() || thinking) return
+        chat.add(question to true); q = ""; thinking = true
+        scope.launch {
+            state.animateScrollToItem(chat.size)
+            val a = try { (repo.call("POST", "/api/ask", mapOf("question" to question)) as Map<*, *>)["answer"].toString() }
+                catch (e: Exception) { e.message?.takeIf { it.isNotBlank() } ?: "I couldn't answer that. Try \"food this month\"." }
+            thinking = false; chat.add(a to false); state.animateScrollToItem(chat.size - 1)
+        }
+    }
     Column(Modifier.fillMaxSize()) {
-        PageHeader("Ask Artha")
+        PageHeader("Ask PAISAve")
         LazyColumn(Modifier.weight(1f), state = state, contentPadding = PaddingValues(20.dp)) {
             items(chat.size) { i -> val (m, mine) = chat[i]
                 Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
-                    Text(m, style = T.body, color = if (mine) P.onGold else P.text, modifier = Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(20.dp))
+                    Text(m, style = T.body, color = if (mine) P.onGold else P.text, modifier = Modifier.widthIn(max = 310.dp).clip(RoundedCornerShape(20.dp))
                         .background(if (mine) P.gold else P.card).padding(14.dp))
                 }
+            }
+            if (thinking) item { Text("Looking…", style = T.body, color = P.muted, modifier = Modifier.padding(vertical = 6.dp).clip(RoundedCornerShape(20.dp)).background(P.card).padding(14.dp)) }
+            if (chat.size == 1) item {
+                Spacer(Modifier.height(10.dp))
+                examples.forEach { e -> Text(e, style = T.label, color = P.gold, modifier = Modifier.padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp))
+                    .background(P.goldSoft).tap { send(e) }.padding(horizontal = 14.dp, vertical = 10.dp)) }
             }
         }
         Row(Modifier.fillMaxWidth().imePadding().navigationBarsPadding().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Field(q, { q = it }, "Ask anything", Modifier.weight(1f)); Spacer(Modifier.width(10.dp))
-            Box(Modifier.size(56.dp).clip(CircleShape).background(P.gold).tap(haptic = HapticFeedbackConstants.CONFIRM) {
-                val question = q.trim(); if (question.isEmpty()) return@tap
-                chat.add(question to true); q = ""
-                scope.launch { val a = try { (repo.call("POST", "/api/ask", mapOf("question" to question)) as Map<*, *>)["answer"].toString() } catch (e: Exception) { e.message ?: "Couldn't answer that" }
-                    chat.add(a to false); state.animateScrollToItem(chat.size - 1) }
-            }, contentAlignment = Alignment.Center) { GlyphIcon("chevron", P.onGold, 26.dp) }
+            Box(Modifier.size(56.dp).clip(CircleShape).background(if (thinking) P.cardHi else P.gold).tap(haptic = HapticFeedbackConstants.CONFIRM) { send(q) },
+                contentAlignment = Alignment.Center) { GlyphIcon("chevron", P.onGold, 26.dp) }
         }
     }
 }
@@ -405,7 +418,7 @@ fun SettingsPage() {
             Spacer(Modifier.height(10.dp))
             if (st["model_ready"] == true) GhostButton("Remove model", Modifier.fillMaxWidth(), P.red) { native.deleteModel(); refresh.bump() }
             else if (pct == null) Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GhostButton("Download", Modifier.weight(1f), P.gold) { native.downloadModel(); toast.show("Downloading. You can keep using Artha"); refresh.bump() }
+                GhostButton("Download", Modifier.weight(1f), P.gold) { native.downloadModel(); toast.show("Downloading. You can keep using PAISAve"); refresh.bump() }
                 GhostButton("Import file", Modifier.weight(1f)) { native.importModel() }
             }
         } }
@@ -446,7 +459,7 @@ fun SettingsPage() {
             }
             Spacer(Modifier.height(10.dp))
             GhostButton("Delete data…", Modifier.fillMaxWidth(), P.red) { deleting = true }
-            Text("Artha ${st["version"] ?: ""}", style = T.small, color = P.muted, modifier = Modifier.padding(top = 14.dp))
+            Text("PAISAve ${st["version"] ?: ""}", style = T.small, color = P.muted, modifier = Modifier.padding(top = 14.dp))
         } }
     }
     if (budget) BudgetSheet(s.d("monthly_budget")) { budget = false }
@@ -454,7 +467,7 @@ fun SettingsPage() {
         var scope by remember { mutableStateOf("transactions") }; var confirm by remember { mutableStateOf("") }
         Sheet({ deleting = false }) {
             Text("Delete data", style = T.title, color = P.text); Spacer(Modifier.height(12.dp))
-            listOf("transactions" to "All transactions, splits and subscriptions", "learned" to "What Artha learned (payees, rules)", "everything" to "Everything (factory reset)").forEach { (k, l) ->
+            listOf("transactions" to "All transactions, splits and subscriptions", "learned" to "What PAISAve learned (payees, rules)", "everything" to "Everything (factory reset)").forEach { (k, l) ->
                 Pill(l, scope == k, Modifier.padding(bottom = 8.dp)) { scope = k } }
             Field(confirm, { confirm = it }, "Type DELETE to confirm"); Spacer(Modifier.height(14.dp))
             GoldButton("Delete permanently", enabled = confirm == "DELETE") { act { call("POST", "/api/data/delete", mapOf("scope" to scope, "confirm" to "DELETE")); toast.show("Deleted") }; deleting = false }

@@ -280,7 +280,7 @@ JSON:""".trimIndent()
             type == "credit" -> PAYEE_IN.find(text)?.groupValues?.get(1)?.trim()
             else -> PAYEE_OUT.findAll(text).map { it.groupValues[1].trim() }.firstOrNull { !isNotAPayee(it) }
         }?.let { titleCase(it.trimEnd('.', '-', ' ')) }?.takeIf { it.length >= 2 && (isPlaceholder(it) || !isNotAPayee(it)) } ?: return null
-        // Category: what you taught Artha first, then a short AI question (only if the model is ready).
+        // Category: what you taught PAISAve first, then a short AI question (only if the model is ready).
         val cat = known.entries.firstOrNull { it.key.equals(party, true) }?.value
             ?: if (isPlaceholder(party)) "Other" else categoryFor(party, party, categories) ?: "Other"
         return Item(type, amount, party, null, cat, confident = !isPlaceholder(party))

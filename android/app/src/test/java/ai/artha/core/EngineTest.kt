@@ -347,9 +347,24 @@ class EngineTest {
         call("POST", "/api/transactions", mapOf("amount" to 400, "merchant" to "Zomato", "category" to "Food & Dining"))
         model.answers["food"] = """{"date_from": "2026-11-01", "date_to": "2026-11-14", "categories": ["Food & Dining"], "party": "", "kind": "debit", "min_amount": 0, "max_amount": 0, "aggregate": "sum"}"""
         val r = call("POST", "/api/ask", mapOf("question" to "how much on food this month")) as Map<String, Any?>
-        assertEquals(650.0, r["total"] as Double, 0.001); assertEquals(true, r["used_ai"])
+        assertEquals(650.0, r["total"] as Double, 0.001); assertEquals("understood without the AI", false, r["used_ai"])
+        assertTrue(r["answer"].toString(), r["answer"].toString().contains("this month"))
         val h = call("GET", "/api/merchants/history?name=Swiggy") as Map<String, Any?>
         assertEquals(250.0, h["total"] as Double, 0.001)
+    }
+
+    @Test fun askAnswersCommonQuestions() {
+        call("POST", "/api/transactions", mapOf("amount" to 20, "merchant" to "Bhqr", "note" to "chai", "category" to "Snacks"))
+        call("POST", "/api/transactions", mapOf("amount" to 30, "merchant" to "Tea Point", "category" to "Snacks"))
+        call("POST", "/api/transactions", mapOf("amount" to 900, "merchant" to "DMart", "category" to "Groceries"))
+        fun ask(q: String) = (call("POST", "/api/ask", mapOf("question" to q)) as Map<String, Any?>)["answer"].toString()
+        assertTrue(ask("how much did I spend on chai this month"), ask("how much did I spend on chai this month").contains("₹50"))
+        assertTrue(ask("biggest expense this month").contains("DMart"))
+        assertTrue(ask("how much is left today").startsWith("Today:"))
+        val where = ask("where do I spend the most")
+        assertTrue(where, where.contains("DMart") && !where.contains("Bhqr"))
+        assertTrue(ask("hi").contains("Ask me"))
+        assertEquals(0, model.calls)
     }
 
     @Test fun userControlledDeletion() {

@@ -25,7 +25,7 @@
         android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="Artha"
+        android:label="PAISAve"
         android:supportsRtl="true"
         android:theme="@style/Theme.Artha"
         android:usesCleartextTraffic="false">
@@ -40,8 +40,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Share a bank SMS / payment text to Artha -->
-            <intent-filter android:label="Log in Artha">
+            <!-- Share a bank SMS / payment text to PAISAve -->
+            <intent-filter android:label="Log in PAISAve">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />

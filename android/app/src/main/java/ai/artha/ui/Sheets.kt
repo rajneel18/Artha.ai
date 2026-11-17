@@ -117,7 +117,7 @@ fun TxSheet(id: Long, onDone: () -> Unit) {
             act {
                 call("PATCH", "/api/transactions/$id", mapOf("merchant" to merchant, "amount" to (amount.toDoubleOrNull() ?: t.d("amount")), "category" to category, "date" to day.toString()))
                 call("POST", "/api/transactions/$id/envelope", mapOf("envelope_id" to envelope))
-                toast.show("Saved. Artha will remember $merchant as $category")
+                toast.show("Saved. PAISAve will remember $merchant as $category")
             }
             onDone()
         }

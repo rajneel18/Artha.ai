@@ -50,7 +50,7 @@ class QwenModel(private val context: Context) : LocalModel {
     private fun engine(): LlmInference = engine ?: run {
         if (CrashGuard.isOff(context, "gpu")) load(LlmInference.Backend.CPU)
         else try { CrashGuard.risky(context, "gpu") { load(LlmInference.Backend.GPU) } } catch (e: Throwable) {
-            Log.w("Artha", "GPU unavailable, using CPU", e); load(LlmInference.Backend.CPU)
+            Log.w("PAISAve", "GPU unavailable, using CPU", e); load(LlmInference.Backend.CPU)
         }
     }.also { engine = it }
 
@@ -84,7 +84,7 @@ class QwenModel(private val context: Context) : LocalModel {
                 try { s.addQueryChunk(suffix + ASSISTANT); s.generateResponse() } finally { s.close() }
             }
         } catch (e: Throwable) {
-            Log.w("Artha", "Prefix reuse not supported here, using full prompts", e)
+            Log.w("PAISAve", "Prefix reuse not supported here, using full prompts", e)
             cloningFailed = true; base?.close(); base = null; cachedPrefix = null
             val s = newSession()
             return try { s.addQueryChunk(USER + prefix + suffix + ASSISTANT); s.generateResponse() } finally { s.close() }
