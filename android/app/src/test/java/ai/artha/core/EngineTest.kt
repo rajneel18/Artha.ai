@@ -301,6 +301,9 @@ class EngineTest {
         val strip = (d["days"] as List<Map<String, Any?>>).associateBy { it["date"] }
         assertEquals("over", strip[today.minusDays(3).toString()]!!["state"]); assertEquals("under", strip[today.toString()]!!["state"])
         assertEquals(50.0, (call("GET", "/api/daily") as Map<String, Any?>)["spent"] as Double, 0.0)
+        // Dining switched out of the daily allowance: only the chai counts that day
+        call("PUT", "/api/settings", mapOf("excluded_categories" to listOf("Food & Dining", "Rent")))
+        assertEquals(120.0, (call("GET", "/api/daily?date=${today.minusDays(3)}") as Map<String, Any?>)["spent"] as Double, 0.0)
     }
 
     @Test fun simpleNotesAreReadWithoutTheAi() {

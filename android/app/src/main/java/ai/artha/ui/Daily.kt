@@ -8,6 +8,8 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,6 +20,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.time.LocalDate
+import kotlinx.coroutines.sync.withLock
 import java.time.format.DateTimeFormatter
 
 private const val DAY_MS = 86_400_000L
@@ -85,7 +88,7 @@ fun TodayCard() {
 @Composable
 fun DailyPage() {
     var day by remember { mutableStateOf(LocalDate.now()) }
-    var adding by remember { mutableStateOf(false) }; var editing by remember { mutableStateOf(false) }
+    var adding by remember { mutableStateOf(false) }; var editing by remember { mutableStateOf(false) }; var counts by remember { mutableStateOf(false) }
     val d = load(day) { map("/api/daily?date=$day") }
     val days = d?.list("days") ?: emptyList()
     val strip = rememberLazyListState()
@@ -134,24 +137,36 @@ fun DailyPage() {
                 val wa = d.d("week_allowance"); val ws = d.d("week_spent")
                 Text("Last 7 days: ${rupees0(ws)} of ${rupees0(wa)}" + if (ws <= wa) ", ${rupees0(wa - ws)} saved" else ", ${rupees0(ws - wa)} over",
                     style = T.small, color = P.muted)
-                Spacer(Modifier.height(16.dp))
+                val out = (d["counted_categories_excluded"] as? List<*>).orEmpty().map { it.toString() }
+                Text(if (out.isEmpty()) "Every category counts toward your daily allowance. Change" else "Not counted: ${out.joinToString(", ")}. Change",
+                    style = T.small, color = P.gold, modifier = Modifier.padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).tap { counts = true }.padding(vertical = 6.dp))
+                Spacer(Modifier.height(12.dp))
                 GoldButton("Add to ${shortDay(day).let { if (it == "Today" || it == "Yesterday") it.lowercase() else it }}", icon = { GlyphIcon("plus", P.onGold, 20.dp) }) { adding = true }
                 SectionTitle("Payments")
             }
             val txs = d?.list("transactions") ?: emptyList()
             if (d != null && txs.isEmpty()) item {
                 Text("Nothing logged for this day yet.", style = T.body, color = P.muted, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(24.dp))
-            } else if (txs.isNotEmpty()) item { Card(pad = 8.dp) { txs.forEach { TxRow(it) } } }
+            } else if (txs.isNotEmpty()) item {
+                val out = (d?.get("counted_categories_excluded") as? List<*>).orEmpty().map { it.toString() }.toSet()
+                val (outside, inside) = txs.partition { it.s("category") in out && it.s("kind") == "debit" }
+                if (inside.isNotEmpty()) Card(pad = 8.dp) { inside.forEach { TxRow(it) } }
+                if (outside.isNotEmpty()) {
+                    Text("Not in the daily allowance", style = T.label, color = P.muted, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
+                    Card(pad = 8.dp) { outside.forEach { TxRow(it) } }
+                }
+            }
         }
     }
     if (adding) AddExpenseSheet(day) { adding = false }
-    if (editing && d != null) DailyBudgetSheet(d.d("allowance"), d.d("suggested")) { editing = false }
+    if (editing && d != null) DailyBudgetSheet(d.d("allowance"), d.d("suggested"), onCounts = { editing = false; counts = true }) { editing = false }
+    if (counts) DailyCountsSheet { counts = false }
 }
 
 private val Color0 = androidx.compose.ui.graphics.Color.Transparent
 
 @Composable
-fun DailyBudgetSheet(current: Double, suggested: Double, onDone: () -> Unit) {
+fun DailyBudgetSheet(current: Double, suggested: Double, onCounts: () -> Unit, onDone: () -> Unit) {
     val act = rememberAct(); val toast = LocalToast.current
     var v by remember { mutableStateOf(if (current > 0) current.toLong().toString() else "") }
     Sheet(onDone) {
@@ -168,5 +183,40 @@ fun DailyBudgetSheet(current: Double, suggested: Double, onDone: () -> Unit) {
             act { call("PUT", "/api/settings", mapOf("daily_allowance" to v.toDouble())); toast.show("Daily budget set to ${rupees0(v.toDouble())}") }
             onDone()
         }
+        Spacer(Modifier.height(10.dp))
+        GhostButton("Choose what counts", Modifier.fillMaxWidth(), P.gold) { onCounts() }
+    }
+}
+
+private val countsLock = kotlinx.coroutines.sync.Mutex() // quick taps save in order
+
+/** Which categories use up the daily allowance. The rest still count in the monthly total. */
+@Composable
+fun DailyCountsSheet(onDone: () -> Unit) {
+    val act = rememberAct(); val h = haptic()
+    val cats = load { (call("GET", "/api/categories") as List<*>).map { it.toString() } } ?: emptyList()
+    val settings = load { map("/api/settings") }
+    var out by remember(settings) { mutableStateOf((settings?.get("excluded_categories") as? List<*>).orEmpty().map { it.toString() }.toSet()) }
+    Sheet(onDone) {
+        Text("What counts each day", style = T.title, color = P.text); Spacer(Modifier.height(4.dp))
+        Text("Switched on: uses up your daily allowance. Switched off: still in your monthly spend, just not in the day's allowance (rent, bills, money sent to family).",
+            style = T.body, color = P.muted)
+        Spacer(Modifier.height(8.dp))
+        Column(Modifier.heightIn(max = 460.dp).verticalScroll(rememberScrollState())) {
+            cats.forEach { c ->
+                val on = c !in out
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).tap { }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text(c, style = T.body, color = if (on) P.text else P.muted, modifier = Modifier.weight(1f))
+                    Switch(on, { now ->
+                        h(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                        out = if (now) out - c else out + c
+                        val save = out.toList()
+                        act { countsLock.withLock { call("PUT", "/api/settings", mapOf("excluded_categories" to save)) } }
+                    }, colors = SwitchDefaults.colors(checkedTrackColor = P.gold, checkedThumbColor = P.onGold, uncheckedTrackColor = P.cardHi))
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        GoldButton("Done") { onDone() }
     }
 }
