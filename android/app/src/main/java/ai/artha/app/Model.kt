@@ -34,7 +34,8 @@ class QwenModel(private val context: Context) : LocalModel {
     private fun <T> onAiThread(block: () -> T): T = aiThread.submit(java.util.concurrent.Callable { block() }).get()
     private var cachedPrefix: String? = null
     private var base: LlmInferenceSession? = null
-    private val cloningWorks get() = !cloningFailed && !CrashGuard.isOff(context, "reuse")
+    // Session cloning crashed natively on the CPU path (Pixel 9), so it's only used on the GPU.
+    private val cloningWorks get() = !cloningFailed && !CrashGuard.isOff(context, "reuse") && !CrashGuard.isOff(context, "gpu")
     private var cloningFailed = false
 
     // Chat formatting is added by hand so a shared prefix can be cached.
