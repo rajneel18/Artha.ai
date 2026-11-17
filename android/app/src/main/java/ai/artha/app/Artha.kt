@@ -38,6 +38,9 @@ class Artha : Application() {
             startupError = CrashGuard.describe(e); CrashGuard.save(this, startupError!!)
             Api(Engine(ai.artha.core.InMemoryDb()), model) // lets the screen open and show the error
         }
+        api.onChange = { Widgets.update(this) }
+        api.engine.onRecorded = { Widgets.update(this) }
+        Widgets.update(this) // new day or new install: draw the widgets fresh
         val nm = getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(NotificationChannel(CH_DETECTED, "Payments detected", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "When PAISAve finds payments in your bank SMS for you to confirm"

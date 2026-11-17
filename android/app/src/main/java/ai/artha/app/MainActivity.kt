@@ -98,6 +98,7 @@ class MainActivity : AppCompatActivity(), Native {
 
     /** "Share" a bank SMS to PAISAve from Messages: it goes to the Detected list like any other SMS. */
     private fun handleShare(i: Intent?) {
+        i?.getStringExtra("open")?.let { ai.artha.ui.pendingOpen = it; i.removeExtra("open") }
         val text = if (i?.action == Intent.ACTION_SEND) i.getStringExtra(Intent.EXTRA_TEXT) else null
         if (text.isNullOrBlank()) return
         io.execute { app.api.handle("POST", "/api/ingest", ai.artha.core.toJson(mapOf("text" to text, "mode" to "sms")).toString()); runOnUiThread { toast("Check it under Detected payments") } }

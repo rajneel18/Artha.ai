@@ -19,8 +19,8 @@ android {
         applicationId = "ai.artha.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 18
-        versionName = "4.1.1"
+        versionCode = 19
+        versionName = "4.2.0"
         ndk { abiFilters += listOf("arm64-v8a") } // phones only; keeps the APK small
     }
     signingConfigs {

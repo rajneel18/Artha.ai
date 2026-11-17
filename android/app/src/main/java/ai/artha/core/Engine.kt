@@ -293,7 +293,10 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
         if (kind == "debit") detectRecurring(m) else autoSettleFromCredit(m, amt)
         ensureStarted()
         row(id)
-    }
+    }.also { if (it != null) onRecorded?.invoke() }
+
+    /** Called after a payment is recorded from anywhere (SMS in the background too). */
+    var onRecorded: (() -> Unit)? = null
 
     private fun sha256(s: String) = MessageDigest.getInstance("SHA-256").digest(s.toByteArray()).joinToString("") { "%02x".format(it) }
 

@@ -15,11 +15,14 @@ class Api(val engine: Engine, val model: LocalModel) {
 
     data class Response(val status: Int, val body: Any?)
 
+    /** Called after anything changes (the phone uses it to refresh home-screen widgets). */
+    var onChange: (() -> Unit)? = null
+
     fun handle(method: String, fullPath: String, body: String?): Response = try {
         val path = fullPath.substringBefore("?")
         val query = fullPath.substringAfter("?", "").split("&").filter { "=" in it }
             .associate { java.net.URLDecoder.decode(it.substringBefore("="), "UTF-8") to java.net.URLDecoder.decode(it.substringAfter("="), "UTF-8") }
-        Response(200, route(method.uppercase(), path, query, parseBody(body)))
+        Response(200, route(method.uppercase(), path, query, parseBody(body))).also { if (method.uppercase() != "GET") onChange?.invoke() }
     } catch (e: ApiError) {
         Response(e.status, mapOf("detail" to e.message))
     } catch (e: ModelMissing) {

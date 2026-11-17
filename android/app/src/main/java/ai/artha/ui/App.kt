@@ -52,6 +52,9 @@ class Toaster { var msg by mutableStateOf<String?>(null); var action by mutableS
 val LocalToast = staticCompositionLocalOf { Toaster() }
 
 /** Full-screen pages that slide over the tabs (Envelopes, Settings, ...). */
+/** A page to open when the app is launched from outside (widget, pop-up). */
+var pendingOpen by mutableStateOf<String?>(null)
+
 class Nav { val stack = mutableStateListOf<String>(); fun go(s: String) { stack.add(s) }; fun back() = if (stack.isNotEmpty()) { stack.removeAt(stack.lastIndex); true } else false }
 val LocalNav = staticCompositionLocalOf { Nav() }
 
@@ -76,6 +79,7 @@ private fun Shell() {
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var adding by remember { mutableStateOf(false) }
     val nav = LocalNav.current
+    LaunchedEffect(pendingOpen) { pendingOpen?.let { if (nav.stack.lastOrNull() != it) nav.go(it); pendingOpen = null } }
     BackHandler(enabled = nav.stack.isNotEmpty() || tab != 0) { if (!nav.back()) tab = 0 }
 
     Box(Modifier.fillMaxSize().background(P.bg)) {

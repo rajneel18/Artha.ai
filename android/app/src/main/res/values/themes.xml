@@ -7,4 +7,13 @@
     </style>
     <color name="bg">#0A0A0A</color>
     <color name="icon_bg">#5F7530</color>
+    <style name="Theme.PAISAve.Popup" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowAnimationStyle">@android:style/Animation.InputMethod</item>
+    </style>
+    <string name="widget_ring_desc">How much of today\'s allowance is left</string>
+    <string name="widget_quick_desc">Type or say an expense from your home screen</string>
 </resources>
