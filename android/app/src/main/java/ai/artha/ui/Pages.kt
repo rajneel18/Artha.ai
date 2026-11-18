@@ -105,7 +105,22 @@ private fun GroupCard(g: Map<String, Any?>) {
     Card(Modifier.padding(bottom = 12.dp).animateContentSize()) {
         Row { Text(g.s("party"), style = T.title.copy(fontSize = 18.sp), color = P.text, modifier = Modifier.weight(1f)); Text(rupees0(g.d("total")), style = T.title, color = P.text) }
         Text("${g.l("count")} payment${if (g.l("count") > 1) "s" else ""} · ${dayLabel(g.s("first"))} to ${dayLabel(g.s("last"))}", style = T.small, color = P.muted)
-        if (placeholder(g.s("party"))) { Spacer(Modifier.height(10.dp)); Field(name, { name = it }, "Who is this?") }
+        @Suppress("UNCHECKED_CAST") val upis = (g["upi_ids"] as? List<String>).orEmpty()
+        if (upis.isNotEmpty()) Text("Paid to " + upis.joinToString(", "), style = T.small, color = P.muted, modifier = Modifier.padding(top = 4.dp))
+        if (upis.size == 1 && upis[0].substringBefore('@').filter { it.isDigit() }.length >= 10)
+            Text("This is a phone number. Search it in your contacts, GPay or PhonePe to see who it is.", style = T.small, color = P.muted, modifier = Modifier.padding(top = 4.dp))
+        val payments = g.list("payments")
+        var showMsgs by remember { mutableStateOf(false) }
+        if (payments.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            GhostButton(if (showMsgs) "Hide messages" else "See messages (${payments.size})", Modifier.fillMaxWidth(), P.gold) { showMsgs = !showMsgs }
+            if (showMsgs) {
+                if (g.s("party") == "Unknown") Text("These may be different people. Name each one below, or name them all at once further down.",
+                    style = T.small, color = P.muted, modifier = Modifier.padding(top = 10.dp))
+                payments.forEach { MessageRow(it) }
+            }
+        }
+        if (placeholder(g.s("party"))) { Spacer(Modifier.height(10.dp)); Field(name, { name = it }, if (g.l("count") > 1) "Who is this? (names all ${g.l("count")})" else "Who is this?") }
         Spacer(Modifier.height(10.dp))
         Text(category, style = T.label, color = P.gold, modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(P.goldSoft).tap { showCats = !showCats }.padding(horizontal = 14.dp, vertical = 8.dp))
         if (showCats) { Spacer(Modifier.height(10.dp)); CategoryPicker(category) { category = it; showCats = false } }
@@ -117,6 +132,37 @@ private fun GroupCard(g: Map<String, Any?>) {
                     if (name.isNotBlank()) put("name", name.trim()) }) as Map<*, *>; toast.show("Logged ${r["count"]}") }
             }, contentAlignment = Alignment.Center) { Text("Log ${g.l("count")}", style = T.label.copy(fontWeight = FontWeight.Bold), color = P.onGold) }
         }
+    }
+}
+
+/** One bank message inside a group: read it, and name/log or skip just this one. */
+@Composable
+private fun MessageRow(m: Map<String, Any?>) {
+    val act = rememberAct(); val toast = LocalToast.current
+    var open by remember { mutableStateOf(false) }; var who by remember { mutableStateOf("") }
+    var cat by remember(m) { mutableStateOf(m.s("category").ifBlank { "Other" }) }; var pick by remember { mutableStateOf(false) }
+    Column(Modifier.padding(top = 10.dp).fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(P.cardHi).tap { open = !open }.padding(14.dp).animateContentSize()) {
+        Row {
+            Text(dayLabel(m.s("received_at")), style = T.label, color = P.muted, modifier = Modifier.weight(1f))
+            Text(rupees(m.d("amount")), style = T.label.copy(fontWeight = FontWeight.Bold), color = P.text)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(m.s("body"), style = T.small, color = P.text, maxLines = if (open) 20 else 3, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        if (open) {
+            Spacer(Modifier.height(10.dp))
+            Field(who, { who = it }, "Who is this? (just this payment)")
+            Spacer(Modifier.height(8.dp))
+            Text(cat, style = T.label, color = P.gold, modifier = Modifier.clip(RoundedCornerShape(14.dp)).background(P.goldSoft).tap { pick = !pick }.padding(horizontal = 14.dp, vertical = 8.dp))
+            if (pick) { Spacer(Modifier.height(8.dp)); CategoryPicker(cat) { cat = it; pick = false } }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                GhostButton("Skip", Modifier.weight(1f)) { act { call("POST", "/api/detected/${m.l("id")}", mapOf("action" to "skip")); toast.show("Skipped") } }
+                GhostButton("Log this one", Modifier.weight(1f), P.gold) {
+                    act { call("POST", "/api/detected/${m.l("id")}", buildMap { put("action", "log"); put("category", cat); if (who.isNotBlank()) put("party", who.trim()) })
+                        toast.show("Logged ${rupees(m.d("amount"))}" + if (who.isNotBlank()) " to ${who.trim()}" else "") }
+                }
+            }
+        } else Text("Tap to read it all, or log just this one", style = T.small, color = P.muted, modifier = Modifier.padding(top = 6.dp))
     }
 }
 

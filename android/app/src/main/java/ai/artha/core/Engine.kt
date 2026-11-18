@@ -781,8 +781,11 @@ class Engine(val db: Db, val today: () -> LocalDate = { LocalDate.now(ZoneId.sys
                 "FROM detected d WHERE status='analyzed' AND source IN ('history','import') GROUP BY COALESCE(gkey, lower(party)), type ORDER BY total DESC")
         val withSamples = groups.map { g ->
             g.toMutableMap().apply {
-                this["samples"] = db.query("SELECT body, amount, received_at FROM detected WHERE status='analyzed' AND source IN ('history','import') " +
-                    "AND COALESCE(gkey, lower(party))=? AND type=? ORDER BY received_at DESC LIMIT 3", g.s("gkey"), g.s("type"))
+                val all = db.query("SELECT id, body, amount, received_at, upi_id, category FROM detected WHERE status='analyzed' AND source IN ('history','import') " +
+                    "AND COALESCE(gkey, lower(party))=? AND type=? ORDER BY received_at DESC LIMIT 100", g.s("gkey"), g.s("type"))
+                this["samples"] = all.take(3)
+                this["payments"] = all
+                this["upi_ids"] = all.mapNotNull { it.s("upi_id") }.distinct().take(5)
             }
         }
         return mapOf(
